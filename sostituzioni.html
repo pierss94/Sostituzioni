@@ -127,6 +127,15 @@ function calcola(st){
   res.assign=byM;
   return res;
 }
+function pad2(n){return (n<10?'0':'')+n;}
+function parseD(s){var p=String(s).split('-');return new Date(+p[0],+p[1]-1,+p[2],12,0,0);}
+function fmtD(d){return d.getFullYear()+'-'+pad2(d.getMonth()+1)+'-'+pad2(d.getDate());}
+function pasqua(y){var a=y%19,b=Math.floor(y/100),c=y%100,d=Math.floor(b/4),e=b%4,f=Math.floor((b+8)/25),g=Math.floor((b-f+1)/3),h=(19*a+b-d-g+15)%30,i=Math.floor(c/4),k=c%4,l=(32+2*e+2*i-h-k)%7,m=Math.floor((a+11*h+22*l)/451),mo=Math.floor((h+l-7*m+114)/31),da=((h+l-7*m+114)%31)+1;return new Date(y,mo-1,da,12,0,0);}
+var _fer={};
+function feriali(y){if(_fer[y])return _fer[y];var s={};['01-01','01-06','04-25','05-01','06-02','08-15','11-01','12-08','12-25','12-26'].forEach(function(x){s[y+'-'+x]=1;});var p=pasqua(y);p.setDate(p.getDate()+1);s[fmtD(p)]=1;_fer[y]=s;return s;}
+function isLav(d){var w=d.getDay();if(w===0||w===6)return false;return !feriali(d.getFullYear())[fmtD(d)];}
+function bdays(from,to){var a=parseD(from),b=parseD(to);if(fmtD(a)===fmtD(b))return 0;var sign=1,lo=a,hi=b;if(b<a){sign=-1;lo=b;hi=a;}var n=0,d=new Date(lo.getTime());while(true){d.setDate(d.getDate()+1);if(d>hi)break;if(isLav(d))n++;}return sign*n;}
+function statoRep(d,t){if(d>=t+3)return 'avanti';if(d>=t)return 'ok';if(d>=t-2)return 'rischio';return 'indietro';}
 //CORE-END
 
 var KEY='sostituzioni_v1';
@@ -135,7 +144,21 @@ function oggi(){var d=new Date(),z=function(n){return(n<10?'0':'')+n;};return d.
 function defState(){
   var m=[];
   for(var i=0;i<35;i++)m.push({id:'m'+(i+1),name:NOMI[i]||('Mansione '+(i+1)),active:i<NOMI.length,peso:1});
-  return {mansioni:m,persone:[],assenti:[],data:oggi(),storico:[]};
+  return {mansioni:m,persone:[],assenti:[],data:oggi(),storico:[],reparti:defReparti(m),consegne:{}};
+}
+function defReparti(ms){
+  var n=['Taglio 1','Taglio 2','Taglio 3','Rulli','Accessori','Guide+terminali 1','Guide+terminali 2','Sporgere'],o=[];
+  n.forEach(function(x){var m=ms.filter(function(y){return y.name===x;})[0];if(m)o.push({mid:m.id,target:5});});
+  return o;
+}
+function ensure(){
+  if(!state.reparti)state.reparti=defReparti(state.mansioni);
+  if(!state.consegne)state.consegne={};
+  if(!state.storico)state.storico=[];
+  if(!state.assenti)state.assenti=[];
+  var t=oggi();
+  if(state.data!==t){state.data=t;state.assenti=[];}
+  save();
 }
 var state=defState(),ui={tab:'giorno',open:{}};
 function load(){try{var s=localStorage.getItem(KEY);if(s){var o=JSON.parse(s);if(o&&o.mansioni&&o.persone)state=o;}}catch(e){}}
@@ -146,11 +169,44 @@ function mById(id){return state.mansioni.filter(function(m){return m.id===id;})[
 function pById(id){return state.persone.filter(function(p){return p.id===id;})[0];}
 function mn(m){return m?esc(m.name):'—';}
 
-var TABS=[['giorno','Giorno'],['mansioni','Mansioni'],['persone','Persone'],['storico','Storico'],['dati','Dati']];
+var TABS=[['giorno','Giorno'],['reparti','Reparti'],['mansioni','Mansioni'],['persone','Persone'],['storico','Storico'],['dati','Dati']];
 function renderTabs(){
   document.getElementById('tabs').innerHTML=TABS.map(function(t){
     return '<button data-act="tab" data-v="'+t[0]+'" class="'+(ui.tab===t[0]?'on':'')+'">'+t[1]+'</button>';
   }).join('');
+}
+
+function repOf(mid){return (state.reparti||[]).filter(function(r){return r.mid===mid;})[0];}
+function consFor(mid,date){
+  var c=state.consegne||{};
+  if(c[date]&&c[date][mid])return {v:c[date][mid],d:date};
+  var ks=Object.keys(c).filter(function(k){return k<date&&c[k][mid];}).sort();
+  if(ks.length){var k=ks[ks.length-1];return {v:c[k][mid],d:k};}
+  return null;
+}
+function repInfo(r,date){var c=consFor(r.mid,date);if(!c)return null;var d=bdays(date,c.v);return {days:d,stato:statoRep(d,r.target),since:c.d!==date?c.d:null,v:c.v};}
+var STL={avanti:['t-ok','avanti'],ok:['t-ok','in linea'],rischio:['t-wa','a rischio'],indietro:['t-ko','indietro']};
+function sg(n){return (n>0?'+':'')+n;}
+function fd(s){var p=s.split('-');return p[2]+'/'+p[1];}
+function repTag(mid){var r=repOf(mid);if(!r)return '';var i=repInfo(r,state.data);if(!i)return '';var s=STL[i.stato];return ' <span class="tag '+s[0]+'">'+s[1]+' '+sg(i.days)+' gg</span>';}
+function vReparti(){
+  var rl=(state.reparti||[]).filter(function(r){var m=mById(r.mid);return m&&m.active;});
+  var h='<div class="card"><div class="mu">Per ogni reparto inserisci la <b>data di consegna al cliente dell\'ordine più vecchio ancora da lavorare</b>. Anticipo = giorni lavorativi (lun-ven, senza festivi) da oggi a quella data. In linea dal target in su, a rischio fino a 2 giorni sotto, indietro oltre; "avanti" da target+3.</div><div class="row" style="margin-top:8px"><input type="date" data-chg="data" value="'+esc(state.data)+'"></div></div>';
+  if(!rl.length)h+='<div class="card">Nessun reparto tracciato. Aprilo qui sotto e scegli cosa tracciare.</div>';
+  rl.forEach(function(r){
+    var m=mById(r.mid),i=repInfo(r,state.data),c=consFor(r.mid,state.data);
+    h+='<div class="card"><div class="row"><b style="flex:1">'+esc(m.name)+'</b>';
+    if(i){var s=STL[i.stato];h+='<span class="tag '+s[0]+'">'+s[1]+' '+sg(i.days)+' gg</span>';}
+    h+='</div><div class="row" style="margin-top:8px"><input type="date" data-chg="rdate" data-id="'+r.mid+'" value="'+esc(c?c.v:'')+'" style="flex:1 1 0;width:0;min-width:0"><div class="mu" style="white-space:nowrap">target gg <input type="number" min="0" max="30" data-chg="rtarget" data-id="'+r.mid+'" value="'+r.target+'" style="width:56px;padding:6px;border:1px solid var(--bd);border-radius:8px;background:var(--bg);color:var(--tx);font-size:16px"></div></div>';
+    if(i&&i.since)h+='<div class="mu" style="margin-top:4px">Valore dell\'ultimo inserimento ('+fd(i.since)+'): aggiornalo solo se è cambiato.</div>';
+    h+='</div>';
+  });
+  h+='<details class="card" data-id="__rt" '+(ui.open.__rt?'open':'')+'><summary><b>Cosa tracciare</b></summary><div style="margin-top:8px">';
+  state.mansioni.forEach(function(m){
+    if(!m.active)return;
+    h+='<div class="mrow"><input type="checkbox" data-chg="rtrack" data-id="'+m.id+'" '+(repOf(m.id)?'checked':'')+' style="width:22px;height:22px"><span class="nm">'+esc(m.name)+'</span></div>';
+  });
+  return h+'</div></details>';
 }
 
 function vGiorno(){
@@ -174,7 +230,11 @@ function vRis(r){
   if(r.pres.length<r.att.length)h+='<div class="warn">Presenti ('+r.pres.length+') meno delle mansioni attive ('+r.att.length+'): almeno '+(r.att.length-r.pres.length)+' restano scoperte comunque.</div>';
   h+='<div class="kpi"><div><b>'+r.assenti.length+'/'+r.tot+'</b><span>assenti ('+pct+'%)</span></div><div><b>'+(r.att.length-r.scoperte.length)+'/'+r.att.length+'</b><span>mansioni coperte</span></div><div><b>'+r.spost.length+'</b><span>spostamenti</span></div></div>';
   h+='<h2>Mansioni scoperte</h2>';
-  if(r.scoperte.length){h+='<div class="card">'+r.scoperte.map(function(m){return '<span class="tag t-ko">'+mn(m)+'</span> ';}).join(' ')+'</div>';}
+  if(r.scoperte.length){
+    h+='<div class="card">'+r.scoperte.map(function(m){return '<div style="margin:3px 0"><span class="tag t-ko">'+mn(m)+'</span>'+repTag(m.id)+'</div>';}).join('')+'</div>';
+    var av=(state.reparti||[]).filter(function(rp){var m=mById(rp.mid),i=(m&&m.active)?repInfo(rp,state.data):null;return i&&i.stato==='avanti';});
+    if(av.length)h+='<div class="card"><div class="mu">Reparti avanti, da cui puoi attingere:</div>'+av.map(function(rp){var i=repInfo(rp,state.data);return '<span class="tag t-ok">'+mn(mById(rp.mid))+' '+sg(i.days)+' gg</span> ';}).join('')+'</div>';
+  }
   else h+='<div class="card"><span class="tag t-ok">Tutte coperte</span></div>';
   if(r.parziali.length){
     h+='<h2>Coperte solo in parte</h2><div class="card">'+r.parziali.map(function(x){return '<div><span class="tag t-wa">'+mn(x.m)+'</span> ← '+esc(x.p.name)+'</div>';}).join('')+'</div>';
@@ -201,7 +261,7 @@ function vRis(r){
 
 function vMansioni(){
   var n=state.mansioni.filter(function(m){return m.active;}).length;
-  var h='<div class="card"><b>'+n+' attive</b> su 35. Togli la spunta alle mansioni che non sono realmente operative: non vengono né coperte né contate.<div class="mu" style="margin-top:6px"><b>Priorità</b>: quando i buchi sono più delle persone, l\'app tappa prima le mansioni con priorità più alta, anche togliendo gente a quelle più basse. Con priorità tutte uguali non sposta nessuno se il numero di scoperte non migliora.</div></div><div class="card">';
+  var h='<div class="card"><b>'+n+' attive</b> su 35. Togli la spunta alle mansioni che non sono realmente operative: non vengono né coperte né contate.<div class="mu" style="margin-top:6px"><b>Priorità</b>: quando i buchi sono più delle persone, l\'app tappa prima le mansioni con priorità più alta, anche togliendo gente a quelle più basse. Con priorità tutte uguali non sposta nessuno se il numero di scoperte non migliora.</div><div style="margin-top:8px"><button class="b" data-act="crit">Imposta Critica: Banco, PVC, Profilatrici, Assemblatrici, Imballatrici</button></div></div><div class="card">';
   state.mansioni.forEach(function(m){
     var pe=m.peso||1;
     h+='<div class="mrow"><input type="checkbox" data-chg="mact" data-id="'+m.id+'" '+(m.active?'checked':'')+' style="width:22px;height:22px"><input class="nm" type="text" data-chg="mnome" data-id="'+m.id+'" value="'+esc(m.name)+'"><select data-chg="mpeso" data-id="'+m.id+'" style="width:92px;padding:8px 4px">'+[[1,'Normale'],[2,'Alta'],[3,'Critica']].map(function(o){return '<option value="'+o[0]+'"'+(pe===o[0]?' selected':'')+'>'+o[1]+'</option>';}).join('')+'</select></div>';
@@ -247,10 +307,18 @@ function vStorico(){
   h+='<h2>Mansioni scoperte più spesso</h2><div class="card">';
   if(rows.length){h+='<table><tr><th>Mansione</th><th class="n">Giorni</th><th class="n">%</th></tr>'+rows.map(function(n){return '<tr><td>'+esc(n)+'</td><td class="n">'+cnt[n]+'</td><td class="n">'+Math.round(cnt[n]/tot*100)+'%</td></tr>';}).join('')+'</table>';}
   else h+='Nessuna scopertura nei giorni salvati.';
-  h+='</div><h2>Giorni</h2>';
+  h+='</div>';
+  var sc={},dn={};
+  s.forEach(function(e){Object.keys(e.anticipi||{}).forEach(function(n){dn[n]=(dn[n]||0)+1;});(e.sotto||[]).forEach(function(n){sc[n]=(sc[n]||0)+1;});});
+  var rk=Object.keys(dn).sort(function(a,b){return (sc[b]||0)/dn[b]-(sc[a]||0)/dn[a];});
+  if(rk.length){
+    h+='<h2>Reparti sotto target</h2><div class="card"><table><tr><th>Reparto</th><th class="n">Giorni sotto</th><th class="n">%</th></tr>'+rk.map(function(n){return '<tr><td>'+esc(n)+'</td><td class="n">'+(sc[n]||0)+'/'+dn[n]+'</td><td class="n">'+Math.round((sc[n]||0)/dn[n]*100)+'%</td></tr>';}).join('')+'</table></div>';
+  }
+  h+='<h2>Giorni</h2>';
   s.forEach(function(e){
     h+='<div class="card"><div class="row"><b style="flex:1">'+esc(e.date)+'</b><span class="mu">'+e.assenti.length+' assenti ('+e.pct+'%)</span><button class="b d" data-act="sdel" data-id="'+e.id+'">✕</button></div>';
     h+='<div class="mu">Assenti: '+(e.assenti.map(esc).join(', ')||'nessuno')+'</div>';
+    if(e.anticipi&&Object.keys(e.anticipi).length)h+='<div class="mu" style="margin:4px 0">Anticipi: '+Object.keys(e.anticipi).map(function(n){return esc(n)+' '+sg(e.anticipi[n]);}).join(' · ')+'</div>';
     h+='<div>'+((e.scoperte||[]).length?e.scoperte.map(function(n){return '<span class="tag t-ko">'+esc(n)+'</span> ';}).join(' '):'<span class="tag t-ok">tutte coperte</span>')+'</div></div>';
   });
   return h;
@@ -264,7 +332,7 @@ function vDati(){
 
 function render(){
   renderTabs();
-  var f={giorno:vGiorno,mansioni:vMansioni,persone:vPersone,storico:vStorico,dati:vDati}[ui.tab];
+  var f={giorno:vGiorno,reparti:vReparti,mansioni:vMansioni,persone:vPersone,storico:vStorico,dati:vDati}[ui.tab];
   document.getElementById('view').innerHTML=f();
 }
 
@@ -336,7 +404,9 @@ document.addEventListener('click',function(e){
   if(a==='noass'){state.assenti=[];save();render();return;}
   if(a==='salvag'){
     var r=calcola(state);
-    var en={id:'s'+Date.now().toString(36),date:state.data,assenti:r.assenti.map(function(x){return x.name;}),pct:r.tot?Math.round(r.assenti.length/r.tot*1000)/10:0,scoperte:r.scoperte.map(function(m){return m.name;}),parziali:r.parziali.map(function(x){return x.m.name;}),spost:r.spost.length,presenti:r.pres.length,tot:r.tot};
+    var an={},so=[];
+    (state.reparti||[]).forEach(function(rp){var m=mById(rp.mid);if(!m||!m.active)return;var i=repInfo(rp,state.data);if(!i)return;an[m.name]=i.days;if(i.days<rp.target)so.push(m.name);});
+    var en={id:'s'+Date.now().toString(36),date:state.data,assenti:r.assenti.map(function(x){return x.name;}),pct:r.tot?Math.round(r.assenti.length/r.tot*1000)/10:0,scoperte:r.scoperte.map(function(m){return m.name;}),parziali:r.parziali.map(function(x){return x.m.name;}),spost:r.spost.length,presenti:r.pres.length,tot:r.tot,anticipi:an,sotto:so};
     state.storico=state.storico.filter(function(x){return x.date!==en.date;});
     state.storico.push(en);save();b.textContent='Salvato ✓';return;
   }
@@ -369,6 +439,7 @@ document.addEventListener('click',function(e){
   }
   if(a==='pdel'){if(confirm('Eliminare la persona?')){state.persone=state.persone.filter(function(x){return x.id!==id;});state.assenti=state.assenti.filter(function(x){return x!==id;});save();render();}return;}
   if(a==='sdel'){state.storico=state.storico.filter(function(x){return x.id!==id;});save();render();return;}
+  if(a==='crit'){state.mansioni.forEach(function(m){if(/^(banco|pvc|profilatrice|assemblatrice|imballatrice)/i.test(m.name.trim()))m.peso=3;});save();render();return;}
   if(a==='exj'){dl('sostituzioni_backup.json',JSON.stringify(state),'application/json');return;}
   if(a==='cpj'){var tx=JSON.stringify(state);if(navigator.clipboard)navigator.clipboard.writeText(tx).then(function(){b.textContent='Copiato ✓';});return;}
   if(a==='exc'){exportCSV();return;}
@@ -377,20 +448,23 @@ document.addEventListener('click',function(e){
 document.addEventListener('change',function(e){
   var el=e.target,k=el.dataset&&el.dataset.chg;if(!k)return;
   var id=el.dataset.id;
-  if(k==='data'){state.data=el.value;save();return;}
+  if(k==='data'){if(el.value){state.data=el.value;save();render();}return;}
+  if(k==='rdate'){var cs=state.consegne;if(!cs[state.data])cs[state.data]={};if(el.value)cs[state.data][id]=el.value;else delete cs[state.data][id];save();render();return;}
+  if(k==='rtarget'){var rr=repOf(id);if(rr){rr.target=Math.max(0,parseInt(el.value,10)||0);save();render();}return;}
+  if(k==='rtrack'){if(el.checked){if(!repOf(id))state.reparti.push({mid:id,target:5});}else{state.reparti=state.reparti.filter(function(x){return x.mid!==id;});}save();return;}
   if(k==='mact'){mById(id).active=el.checked;save();return;}
   if(k==='mpeso'){mById(id).peso=parseInt(el.value,10)||1;save();return;}
   if(k==='mnome'){mById(id).name=el.value.trim()||mById(id).name;save();return;}
   if(k==='pnome'){var p=pById(id);p.name=el.value.trim()||p.name;save();return;}
   if(k==='phome'){var q=pById(id);q.home=el.value;if(q.cov&&q.home)delete q.cov[q.home];save();render();return;}
-  if(k==='imj'){readFile(el,function(t){try{var o=JSON.parse(t);if(!o.mansioni||!o.persone)throw 0;state=o;save();render();alert('Backup ripristinato.');}catch(x){alert('File non valido.');}});return;}
+  if(k==='imj'){readFile(el,function(t){try{var o=JSON.parse(t);if(!o.mansioni||!o.persone)throw 0;state=o;ensure();render();alert('Backup ripristinato.');}catch(x){alert('File non valido.');}});return;}
   if(k==='imc'){readFile(el,importCSV);return;}
 });
 document.addEventListener('toggle',function(e){
   var d=e.target;if(d.tagName==='DETAILS'&&d.dataset.id)ui.open[d.dataset.id]=d.open;
 },true);
 
-load();render();
+load();ensure();render();
 </script>
 </body>
 </html>
