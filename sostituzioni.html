@@ -27,6 +27,7 @@ button.d{color:var(--ko)}
 .chips{display:flex;flex-wrap:wrap;gap:6px}
 .chip{border:1px solid var(--bd);background:var(--card);color:var(--tx);padding:8px 10px;border-radius:999px;font-size:14px}
 .chip.ass{background:var(--kobg);border-color:var(--ko);color:var(--ko);text-decoration:line-through}
+.chip.half{background:var(--wabg);border-color:var(--wa);color:var(--wa)}
 .kpi{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
 .kpi div{background:var(--card);border:1px solid var(--bd);border-radius:10px;padding:8px;text-align:center}
 .kpi b{display:block;font-size:20px}
@@ -88,15 +89,16 @@ function hungarian(a,n){
   for(j=1;j<=n;j++){if(p[j]>0)ans[p[j]-1]=j-1;}
   return ans;
 }
-function calcola(st){
-  var att=st.mansioni.filter(function(m){return m.active;});
-  var pres=st.persone.filter(function(p){return st.assenti.indexOf(p.id)<0;});
-  var assenti=st.persone.filter(function(p){return st.assenti.indexOf(p.id)>=0;});
-  var res={att:att,pres:pres,assenti:assenti,tot:st.persone.length,assign:{},scoperte:[],parziali:[],spost:[],liberi:[],chains:[],altri:[]};
+function calcolaFascia(att,pres,prev){
+  var res={att:att,pres:pres,assign:{},scoperte:[],parziali:[],spost:[],liberi:[],chains:[],altri:[]};
   var N=Math.max(att.length,pres.length);
   if(!N)return res;
   var cost=[],i,j;
-  for(i=0;i<N;i++){cost[i]=[];for(j=0;j<N;j++){cost[i][j]=(i<pres.length&&j<att.length)?-score(pres[i],att[j]):0;}}
+  for(i=0;i<N;i++){cost[i]=[];for(j=0;j<N;j++){
+    var c=0;
+    if(i<pres.length&&j<att.length){var s=score(pres[i],att[j]);if(s>0){c=-s;if(prev&&prev[att[j].id]===pres[i].id)c-=0.5;}}
+    cost[i][j]=c;
+  }}
   var ans=hungarian(cost,N),byM={},asgP={};
   pres.forEach(function(p,i){
     var j=ans[i];
@@ -136,6 +138,46 @@ function feriali(y){if(_fer[y])return _fer[y];var s={};['01-01','01-06','04-25',
 function isLav(d){var w=d.getDay();if(w===0||w===6)return false;return !feriali(d.getFullYear())[fmtD(d)];}
 function bdays(from,to){var a=parseD(from),b=parseD(to);if(fmtD(a)===fmtD(b))return 0;var sign=1,lo=a,hi=b;if(b<a){sign=-1;lo=b;hi=a;}var n=0,d=new Date(lo.getTime());while(true){d.setDate(d.getDate()+1);if(d>hi)break;if(isLav(d))n++;}return sign*n;}
 function statoRep(d,t){if(d>=t+3)return 'avanti';if(d>=t)return 'ok';if(d>=t-2)return 'rischio';return 'indietro';}
+function lunedi(s){var d=parseD(s),w=(d.getDay()+6)%7;d.setDate(d.getDate()-w);return fmtD(d);}
+function sqMattina(rot,date){var a=parseD(lunedi(rot.week)),b=parseD(lunedi(date)),wk=Math.round((b-a)/(7*864e5));return (Math.abs(wk)%2===0)?rot.mattina:(rot.mattina==='A'?'B':'A');}
+function turnoP(st,p){var m=st.mansioni.filter(function(x){return x.id===p.home;})[0];return (m&&m.active&&(m.turno==='A'||m.turno==='B'))?m.turno:'G';}
+function calcolaGiorno(st){
+  var sm=sqMattina(st.rot,st.data),sq={M:sm,P:(sm==='A'?'B':'A')};
+  var out={sq:sq,f:{},code:[],fermate:[],tot:st.persone.length,assW:0,assList:[]};
+  var ass=st.ass||{},stop=st.stop||{},prev=null;
+  st.persone.forEach(function(p){
+    var a=ass[p.id];if(!a)return;
+    var t=turnoP(st,p);if(t!=='G')a='T';
+    out.assW+=(a==='T'?1:0.5);out.assList.push({p:p,a:a});
+  });
+  ['M','P'].forEach(function(f){
+    var att=st.mansioni.filter(function(m){
+      if(!m.active)return false;
+      var t=m.turno||'G';
+      if(t!=='G')return t===sq[f]&&!stop[m.id];
+      var s=stop[m.id];return !(s==='T'||s===f);
+    });
+    var pres=st.persone.filter(function(p){
+      var t=turnoP(st,p),a=ass[p.id];
+      if(t!=='G')return t===sq[f]&&!a;
+      return !(a==='T'||a===f);
+    });
+    var r=calcolaFascia(att,pres,prev);
+    out.f[f]=r;prev={};
+    Object.keys(r.assign).forEach(function(k){prev[k]=r.assign[k].id;});
+    att.forEach(function(m){
+      if((m.turno||'G')==='G')return;
+      var a=r.assign[m.id];
+      if(!a)out.code.push({m:m,f:f,ore:8,p:null});
+      else if(turnoP(st,a)==='G')out.code.push({m:m,f:f,ore:(f==='M'?3:4),p:a});
+    });
+  });
+  st.mansioni.forEach(function(m){
+    if(!m.active||!stop[m.id])return;
+    out.fermate.push({m:m,f:((m.turno||'G')==='G'?stop[m.id]:'T')});
+  });
+  return out;
+}
 //CORE-END
 
 var KEY='sostituzioni_v1';
@@ -143,21 +185,26 @@ var NOMI=['Profilatrice 1','Profilatrice 2','Assemblatrice 1','Assemblatrice 2',
 function oggi(){var d=new Date(),z=function(n){return(n<10?'0':'')+n;};return d.getFullYear()+'-'+z(d.getMonth()+1)+'-'+z(d.getDate());}
 function defState(){
   var m=[];
-  for(var i=0;i<35;i++)m.push({id:'m'+(i+1),name:NOMI[i]||('Mansione '+(i+1)),active:i<NOMI.length,peso:1});
-  return {mansioni:m,persone:[],assenti:[],data:oggi(),storico:[],reparti:defReparti(m),consegne:{}};
+  for(var i=0;i<35;i++)m.push({id:'m'+(i+1),name:NOMI[i]||('Mansione '+(i+1)),active:i<NOMI.length,peso:1,turno:defTurno(NOMI[i]||'')});
+  return {mansioni:m,persone:[],ass:{},stop:{},rot:{week:lunedi(oggi()),mattina:'A'},data:oggi(),storico:[],reparti:defReparti(m),consegne:{}};
 }
 function defReparti(ms){
   var n=['Taglio 1','Taglio 2','Taglio 3','Rulli','Accessori','Guide+terminali 1','Guide+terminali 2','Sporgere'],o=[];
   n.forEach(function(x){var m=ms.filter(function(y){return y.name===x;})[0];if(m)o.push({mid:m.id,target:5});});
   return o;
 }
+function defTurno(n){var x=/^(profilatrice|assemblatrice|imballatrice|pvc)\s*([12])$/i.exec(String(n).trim());return x?(x[2]==='1'?'A':'B'):'G';}
 function ensure(){
+  state.mansioni.forEach(function(m){if(!m.turno)m.turno=defTurno(m.name);if(!m.peso)m.peso=1;});
   if(!state.reparti)state.reparti=defReparti(state.mansioni);
   if(!state.consegne)state.consegne={};
   if(!state.storico)state.storico=[];
-  if(!state.assenti)state.assenti=[];
+  if(!state.ass){state.ass={};(state.assenti||[]).forEach(function(id){state.ass[id]='T';});}
+  delete state.assenti;
+  if(!state.stop)state.stop={};
   var t=oggi();
-  if(state.data!==t){state.data=t;state.assenti=[];}
+  if(!state.rot)state.rot={week:lunedi(t),mattina:'A'};
+  if(state.data!==t){state.data=t;state.ass={};state.stop={};}
   save();
 }
 var state=defState(),ui={tab:'giorno',open:{}};
@@ -209,62 +256,86 @@ function vReparti(){
   return h+'</div></details>';
 }
 
+var FN={M:'mattina',P:'pomeriggio',T:'tutto il giorno'};
+function nStop(){return Object.keys(state.stop||{}).filter(function(k){var m=mById(k);return m&&m.active;}).length;}
 function vGiorno(){
-  var h='';
   if(!state.persone.length){
     return '<div class="card">Non ci sono ancora persone. Vai su <b>Persone</b> e aggiungile (anche con "Crea una persona per mansione").</div>';
   }
+  var g=calcolaGiorno(state),h='';
   h+='<div class="card"><div class="row"><input type="date" id="dd" data-chg="data" value="'+esc(state.data)+'"></div>';
-  h+='<h2 style="margin-top:12px">Tocca gli assenti</h2><div class="chips">';
+  h+='<div class="row" style="margin-top:8px"><div class="mu" style="flex:1">Turno 5-13: <b>squadra '+g.sq.M+'</b><br>Turno 13-21: <b>squadra '+g.sq.P+'</b></div><button class="b" data-act="rot">Inverti</button></div>';
+  h+='<h2 style="margin-top:12px">Tocca gli assenti</h2><div class="mu" style="margin-bottom:6px">1 tocco = tutto il giorno · 2 = solo mattina · 3 = solo pomeriggio</div><div class="chips">';
   state.persone.forEach(function(p){
-    h+='<button class="chip'+(state.assenti.indexOf(p.id)>=0?' ass':'')+'" data-act="ass" data-id="'+p.id+'">'+esc(p.name)+'</button>';
+    var a=state.ass[p.id]||'';
+    if(a&&turnoP(state,p)!=='G')a='T';
+    h+='<button class="chip'+(a==='T'?' ass':(a?' half':''))+'" data-act="ass" data-id="'+p.id+'">'+esc(p.name)+(a==='M'?' · solo matt.':(a==='P'?' · solo pom.':''))+'</button>';
   });
   h+='</div><div class="row" style="margin-top:10px"><button class="b" data-act="noass">Nessun assente</button><button class="b p" data-act="salvag">Salva giorno</button></div></div>';
-  h+=vRis(calcola(state));
+  var ns=nStop();
+  h+='<details class="card" data-id="__st" '+(ui.open.__st?'open':'')+'><summary class="row"><b style="flex:1">Ferma mansioni</b><span class="mu">'+(ns?ns+' ferme':'nessuna ferma')+'</span></summary><div style="margin-top:8px"><div class="mu">Vale solo per oggi. La persona della mansione ferma resta disponibile per coprire altro.</div>';
+  state.mansioni.forEach(function(m){
+    if(!m.active)return;
+    var cur=state.stop[m.id]||'',tu=(m.turno||'G')!=='G';
+    if(tu&&cur)cur='T';
+    var opts=tu?[['','Attiva'],['T','Ferma']]:[['','Attiva'],['M','Matt.'],['P','Pom.'],['T','Giorno']];
+    h+='<div class="mrow"><span class="nm">'+esc(m.name)+'</span><div class="seg">'+opts.map(function(o){
+      return '<button data-act="stop" data-id="'+m.id+'" data-v="'+o[0]+'" class="'+(cur===o[0]?'on':'')+(o[0]?' v1':'')+'">'+o[1]+'</button>';
+    }).join('')+'</div></div>';
+  });
+  h+='</div></details>';
+  h+=vRis(g);
   return h;
 }
-function vRis(r){
+function secF(r){
   var h='';
-  if(!r.att.length)return '<div class="warn">Nessuna mansione attiva. Attivale in Mansioni.</div>';
-  var pct=r.tot?Math.round(r.assenti.length/r.tot*1000)/10:0;
-  if(r.pres.length<r.att.length)h+='<div class="warn">Presenti ('+r.pres.length+') meno delle mansioni attive ('+r.att.length+'): almeno '+(r.att.length-r.pres.length)+' restano scoperte comunque.</div>';
-  h+='<div class="kpi"><div><b>'+r.assenti.length+'/'+r.tot+'</b><span>assenti ('+pct+'%)</span></div><div><b>'+(r.att.length-r.scoperte.length)+'/'+r.att.length+'</b><span>mansioni coperte</span></div><div><b>'+r.spost.length+'</b><span>spostamenti</span></div></div>';
-  h+='<h2>Mansioni scoperte</h2>';
-  if(r.scoperte.length){
-    h+='<div class="card">'+r.scoperte.map(function(m){return '<div style="margin:3px 0"><span class="tag t-ko">'+mn(m)+'</span>'+repTag(m.id)+'</div>';}).join('')+'</div>';
-    var av=(state.reparti||[]).filter(function(rp){var m=mById(rp.mid),i=(m&&m.active)?repInfo(rp,state.data):null;return i&&i.stato==='avanti';});
-    if(av.length)h+='<div class="card"><div class="mu">Reparti avanti, da cui puoi attingere:</div>'+av.map(function(rp){var i=repInfo(rp,state.data);return '<span class="tag t-ok">'+mn(mById(rp.mid))+' '+sg(i.days)+' gg</span> ';}).join('')+'</div>';
-  }
+  if(!r.att.length)return '<div class="card mu">Nessuna mansione da coprire.</div>';
+  if(r.pres.length<r.att.length)h+='<div class="warn">Presenti ('+r.pres.length+') meno delle mansioni da coprire ('+r.att.length+').</div>';
+  if(r.scoperte.length)h+='<div class="card">'+r.scoperte.map(function(m){return '<div style="margin:3px 0"><span class="tag t-ko">'+mn(m)+'</span>'+repTag(m.id)+'</div>';}).join('')+'</div>';
   else h+='<div class="card"><span class="tag t-ok">Tutte coperte</span></div>';
-  if(r.parziali.length){
-    h+='<h2>Coperte solo in parte</h2><div class="card">'+r.parziali.map(function(x){return '<div><span class="tag t-wa">'+mn(x.m)+'</span> ← '+esc(x.p.name)+'</div>';}).join('')+'</div>';
-  }
-  if(r.chains.length){
-    h+='<h2>Catene di sostituzione</h2>';
-    r.chains.forEach(function(c){
-      h+='<div class="card"><div class="chain">';
-      c.steps.forEach(function(s,i){
-        if(s.p)h+='<div>'+mn(s.m)+' ← <b>'+esc(s.p.name)+'</b>'+(s.l===1?' <span class="tag t-wa">parz.</span>':'')+'</div>';
-        else h+='<div>'+mn(s.m)+' <span class="tag t-ko">scoperta</span></div>';
-      });
-      h+='</div></div>';
+  if(r.parziali.length)h+='<div class="card"><div class="mu">Coperte solo in parte</div>'+r.parziali.map(function(x){return '<div><span class="tag t-wa">'+mn(x.m)+'</span> ← '+esc(x.p.name)+'</div>';}).join('')+'</div>';
+  r.chains.forEach(function(c){
+    h+='<div class="card"><div class="chain">';
+    c.steps.forEach(function(s){
+      if(s.p)h+='<div>'+mn(s.m)+' ← <b>'+esc(s.p.name)+'</b>'+(s.l===1?' <span class="tag t-wa">parz.</span>':'')+'</div>';
+      else h+='<div>'+mn(s.m)+' <span class="tag t-ko">scoperta</span></div>';
     });
+    h+='</div></div>';
+  });
+  if(r.altri.length)h+='<div class="card"><div class="mu">Altri spostamenti</div>'+r.altri.map(function(s){return '<div>'+esc(s.p.name)+' → '+mn(s.m)+(s.l===1?' <span class="tag t-wa">parz.</span>':'')+'</div>';}).join('')+'</div>';
+  if(r.liberi.length)h+='<div class="card"><div class="mu">Presenti senza mansione (disponibili)</div>'+r.liberi.map(function(p){return esc(p.name);}).join(', ')+'</div>';
+  return h;
+}
+function vRis(g){
+  var h='',nsc=g.f.M.scoperte.length+g.f.P.scoperte.length,ore=0;
+  g.code.forEach(function(c){ore+=c.ore;});
+  var pct=g.tot?Math.round(g.assW/g.tot*1000)/10:0;
+  h+='<div class="kpi"><div><b>'+g.assW+'/'+g.tot+'</b><span>assenti ('+pct+'%)</span></div><div><b>'+nsc+'</b><span>mezze giornate scoperte</span></div><div><b>'+ore+' h</b><span>turni senza operatore</span></div></div>';
+  var a=secF(g.f.M),b=secF(g.f.P);
+  if(a===b)h+='<h2>Tutto il giorno</h2>'+a;
+  else h+='<h2>Mattina 8-13 · in turno squadra '+g.sq.M+'</h2>'+a+'<h2>Pomeriggio 13-17 · in turno squadra '+g.sq.P+'</h2>'+b;
+  if(g.code.length){
+    h+='<h2>Turni: ore senza operatore</h2><div class="card">'+g.code.map(function(c){
+      if(!c.p)return '<div style="margin:3px 0"><span class="tag t-ko">'+mn(c.m)+'</span> tutto il turno scoperto (8 h)</div>';
+      return '<div style="margin:3px 0"><span class="tag t-wa">'+mn(c.m)+'</span> '+(c.f==='M'?'5-8':'17-21')+' scoperta ('+c.ore+' h), '+(c.f==='M'?'8-13':'13-17')+' coperta da <b>'+esc(c.p.name)+'</b></div>';
+    }).join('')+'</div>';
   }
-  if(r.altri.length){
-    h+='<h2>Altri spostamenti</h2><div class="card">'+r.altri.map(function(s){return '<div>'+esc(s.p.name)+' → '+mn(s.m)+(s.l===1?' <span class="tag t-wa">parz.</span>':'')+'</div>';}).join('')+'</div>';
+  if(g.fermate.length){
+    h+='<h2>Ferme per tua scelta</h2><div class="card">'+g.fermate.map(function(x){return '<span class="tag t-wa">'+mn(x.m)+' · '+((x.m.turno||'G')==='G'?FN[x.f]:'turno')+'</span> ';}).join('')+'</div>';
   }
-  if(r.liberi.length){
-    h+='<h2>Presenti senza mansione</h2><div class="card">'+r.liberi.map(function(p){return esc(p.name);}).join(', ')+'</div>';
+  if(nsc){
+    var av=(state.reparti||[]).filter(function(rp){var m=mById(rp.mid),i=(m&&m.active)?repInfo(rp,state.data):null;return i&&i.stato==='avanti';});
+    if(av.length)h+='<div class="card"><div class="mu">Reparti avanti, che puoi fermare o da cui puoi attingere:</div>'+av.map(function(rp){var i=repInfo(rp,state.data);return '<span class="tag t-ok">'+mn(mById(rp.mid))+' '+sg(i.days)+' gg</span> ';}).join('')+'</div>';
   }
   return h;
 }
 
 function vMansioni(){
   var n=state.mansioni.filter(function(m){return m.active;}).length;
-  var h='<div class="card"><b>'+n+' attive</b> su 35. Togli la spunta alle mansioni che non sono realmente operative: non vengono né coperte né contate.<div class="mu" style="margin-top:6px"><b>Priorità</b>: quando i buchi sono più delle persone, l\'app tappa prima le mansioni con priorità più alta, anche togliendo gente a quelle più basse. Con priorità tutte uguali non sposta nessuno se il numero di scoperte non migliora.</div><div style="margin-top:8px"><button class="b" data-act="crit">Imposta Critica: Banco, PVC, Profilatrici, Assemblatrici, Imballatrici</button></div></div><div class="card">';
+  var h='<div class="card"><b>'+n+' attive</b> su 35. Togli la spunta alle mansioni che non sono realmente operative: non vengono né coperte né contate.<div class="mu" style="margin-top:6px"><b>Priorità</b>: quando i buchi sono più delle persone, l\'app tappa prima le mansioni con priorità più alta, anche togliendo gente a quelle più basse. Con priorità tutte uguali non sposta nessuno se il numero di scoperte non migliora.</div><div class="mu" style="margin-top:6px"><b>Orario</b>: Giornata = 8-17. Squadra A e B = mansioni a turno (5-13 / 13-21): chi ha quella mansione come base è un turnista di quella squadra.</div><div style="margin-top:8px"><button class="b" data-act="crit">Imposta Critica: Banco, PVC, Profilatrici, Assemblatrici, Imballatrici</button></div></div><div class="card">';
   state.mansioni.forEach(function(m){
-    var pe=m.peso||1;
-    h+='<div class="mrow"><input type="checkbox" data-chg="mact" data-id="'+m.id+'" '+(m.active?'checked':'')+' style="width:22px;height:22px"><input class="nm" type="text" data-chg="mnome" data-id="'+m.id+'" value="'+esc(m.name)+'"><select data-chg="mpeso" data-id="'+m.id+'" style="width:92px;padding:8px 4px">'+[[1,'Normale'],[2,'Alta'],[3,'Critica']].map(function(o){return '<option value="'+o[0]+'"'+(pe===o[0]?' selected':'')+'>'+o[1]+'</option>';}).join('')+'</select></div>';
+    var pe=m.peso||1,tu=m.turno||'G';
+    h+='<div class="mrow" style="flex-wrap:wrap"><input type="checkbox" data-chg="mact" data-id="'+m.id+'" '+(m.active?'checked':'')+' style="width:22px;height:22px"><input class="nm" type="text" data-chg="mnome" data-id="'+m.id+'" value="'+esc(m.name)+'"><div class="row" style="width:100%;padding-left:30px"><select data-chg="mpeso" data-id="'+m.id+'" style="padding:8px 4px">'+[[1,'Normale'],[2,'Alta'],[3,'Critica']].map(function(o){return '<option value="'+o[0]+'"'+(pe===o[0]?' selected':'')+'>'+o[1]+'</option>';}).join('')+'</select><select data-chg="mturno" data-id="'+m.id+'" style="padding:8px 4px">'+[['G','Giornata'],['A','Turno sq. A'],['B','Turno sq. B']].map(function(o){return '<option value="'+o[0]+'"'+(tu===o[0]?' selected':'')+'>'+o[1]+'</option>';}).join('')+'</select></div></div>';
   });
   return h+'</div>';
 }
@@ -300,14 +371,27 @@ function vPersone(){
 function vStorico(){
   var s=state.storico.slice().sort(function(a,b){return a.date<b.date?1:-1;});
   if(!s.length)return '<div class="card">Nessun giorno salvato. Dalla scheda Giorno premi "Salva giorno".</div>';
-  var cnt={},tot=s.length,sp=0,sa=0;
-  s.forEach(function(e){sp+=e.pct;sa+=e.assenti.length;(e.scoperte||[]).forEach(function(n){cnt[n]=(cnt[n]||0)+1;});});
-  var h='<div class="kpi"><div><b>'+tot+'</b><span>giorni salvati</span></div><div><b>'+(Math.round(sp/tot*10)/10)+'%</b><span>assenza media</span></div><div><b>'+(Math.round(sa/tot*10)/10)+'</b><span>assenti/giorno</span></div></div>';
+  var cnt={},fer={},tot=s.length,sp=0,sa=0,ore=0;
+  function nA(e){return e.nAss!=null?e.nAss:e.assenti.length;}
+  s.forEach(function(e){
+    sp+=e.pct;sa+=nA(e);ore+=(e.oreTurno||0);
+    if(e.v===2){
+      (e.scM||[]).concat(e.scP||[]).forEach(function(n){cnt[n]=(cnt[n]||0)+1;});
+      (e.fermate||[]).forEach(function(x){fer[x.n]=(fer[x.n]||0)+(x.f==='T'?2:1);});
+    }else{
+      (e.scoperte||[]).forEach(function(n){cnt[n]=(cnt[n]||0)+2;});
+    }
+  });
+  var h='<div class="kpi"><div><b>'+tot+'</b><span>giorni salvati</span></div><div><b>'+(Math.round(sp/tot*10)/10)+'%</b><span>assenza media</span></div><div><b>'+ore+' h</b><span>turni senza operatore</span></div></div>';
   var rows=Object.keys(cnt).sort(function(a,b){return cnt[b]-cnt[a];});
   h+='<h2>Mansioni scoperte più spesso</h2><div class="card">';
-  if(rows.length){h+='<table><tr><th>Mansione</th><th class="n">Giorni</th><th class="n">%</th></tr>'+rows.map(function(n){return '<tr><td>'+esc(n)+'</td><td class="n">'+cnt[n]+'</td><td class="n">'+Math.round(cnt[n]/tot*100)+'%</td></tr>';}).join('')+'</table>';}
+  if(rows.length){h+='<table><tr><th>Mansione</th><th class="n">Mezze giornate</th><th class="n">%</th></tr>'+rows.map(function(n){return '<tr><td>'+esc(n)+'</td><td class="n">'+cnt[n]+'</td><td class="n">'+Math.round(cnt[n]/(tot*2)*100)+'%</td></tr>';}).join('')+'</table>';}
   else h+='Nessuna scopertura nei giorni salvati.';
   h+='</div>';
+  var fr=Object.keys(fer).sort(function(a,b){return fer[b]-fer[a];});
+  if(fr.length){
+    h+='<h2>Ferme per tua scelta</h2><div class="card"><table><tr><th>Mansione</th><th class="n">Mezze giornate</th></tr>'+fr.map(function(n){return '<tr><td>'+esc(n)+'</td><td class="n">'+fer[n]+'</td></tr>';}).join('')+'</table></div>';
+  }
   var sc={},dn={};
   s.forEach(function(e){Object.keys(e.anticipi||{}).forEach(function(n){dn[n]=(dn[n]||0)+1;});(e.sotto||[]).forEach(function(n){sc[n]=(sc[n]||0)+1;});});
   var rk=Object.keys(dn).sort(function(a,b){return (sc[b]||0)/dn[b]-(sc[a]||0)/dn[a];});
@@ -315,11 +399,21 @@ function vStorico(){
     h+='<h2>Reparti sotto target</h2><div class="card"><table><tr><th>Reparto</th><th class="n">Giorni sotto</th><th class="n">%</th></tr>'+rk.map(function(n){return '<tr><td>'+esc(n)+'</td><td class="n">'+(sc[n]||0)+'/'+dn[n]+'</td><td class="n">'+Math.round((sc[n]||0)/dn[n]*100)+'%</td></tr>';}).join('')+'</table></div>';
   }
   h+='<h2>Giorni</h2>';
+  function tags(l){return l.length?l.map(function(n){return '<span class="tag t-ko">'+esc(n)+'</span> ';}).join(' '):'<span class="tag t-ok">tutte coperte</span>';}
   s.forEach(function(e){
-    h+='<div class="card"><div class="row"><b style="flex:1">'+esc(e.date)+'</b><span class="mu">'+e.assenti.length+' assenti ('+e.pct+'%)</span><button class="b d" data-act="sdel" data-id="'+e.id+'">✕</button></div>';
+    h+='<div class="card"><div class="row"><b style="flex:1">'+esc(e.date)+'</b><span class="mu">'+nA(e)+' assenti ('+e.pct+'%)</span><button class="b d" data-act="sdel" data-id="'+e.id+'">✕</button></div>';
     h+='<div class="mu">Assenti: '+(e.assenti.map(esc).join(', ')||'nessuno')+'</div>';
     if(e.anticipi&&Object.keys(e.anticipi).length)h+='<div class="mu" style="margin:4px 0">Anticipi: '+Object.keys(e.anticipi).map(function(n){return esc(n)+' '+sg(e.anticipi[n]);}).join(' · ')+'</div>';
-    h+='<div>'+((e.scoperte||[]).length?e.scoperte.map(function(n){return '<span class="tag t-ko">'+esc(n)+'</span> ';}).join(' '):'<span class="tag t-ok">tutte coperte</span>')+'</div></div>';
+    if(e.v===2){
+      var m=e.scM||[],p=e.scP||[];
+      if(m.join('|')===p.join('|'))h+='<div>'+tags(m)+'</div>';
+      else h+='<div style="margin:3px 0"><span class="mu">Mattina:</span> '+tags(m)+'</div><div style="margin:3px 0"><span class="mu">Pomeriggio:</span> '+tags(p)+'</div>';
+      if((e.code||[]).length)h+='<div class="mu" style="margin-top:4px">Turni senza operatore: '+e.code.map(function(c){return esc(c.n)+' '+c.ore+' h';}).join(' · ')+'</div>';
+      if((e.fermate||[]).length)h+='<div class="mu" style="margin-top:4px">Ferme per scelta: '+e.fermate.map(function(x){return esc(x.n)+' ('+FN[x.f]+')';}).join(' · ')+'</div>';
+    }else{
+      h+='<div>'+tags(e.scoperte||[])+'</div>';
+    }
+    h+='</div>';
   });
   return h;
 }
@@ -400,16 +494,28 @@ document.addEventListener('click',function(e){
   var b=e.target.closest('[data-act]');if(!b)return;
   var a=b.dataset.act,id=b.dataset.id,p;
   if(a==='tab'){ui.tab=b.dataset.v;render();window.scrollTo(0,0);return;}
-  if(a==='ass'){var i=state.assenti.indexOf(id);if(i>=0)state.assenti.splice(i,1);else state.assenti.push(id);save();render();return;}
-  if(a==='noass'){state.assenti=[];save();render();return;}
+  if(a==='ass'){p=pById(id);var ca=state.ass[id]||'',nx;if(turnoP(state,p)!=='G')nx=ca?'':'T';else nx={'':'T',T:'M',M:'P',P:''}[ca];if(nx)state.ass[id]=nx;else delete state.ass[id];save();render();return;}
+  if(a==='noass'){state.ass={};save();render();return;}
   if(a==='salvag'){
-    var r=calcola(state);
+    var g=calcolaGiorno(state);
     var an={},so=[];
     (state.reparti||[]).forEach(function(rp){var m=mById(rp.mid);if(!m||!m.active)return;var i=repInfo(rp,state.data);if(!i)return;an[m.name]=i.days;if(i.days<rp.target)so.push(m.name);});
-    var en={id:'s'+Date.now().toString(36),date:state.data,assenti:r.assenti.map(function(x){return x.name;}),pct:r.tot?Math.round(r.assenti.length/r.tot*1000)/10:0,scoperte:r.scoperte.map(function(m){return m.name;}),parziali:r.parziali.map(function(x){return x.m.name;}),spost:r.spost.length,presenti:r.pres.length,tot:r.tot,anticipi:an,sotto:so};
+    var nm=function(m){return m.name;},ore=0;
+    g.code.forEach(function(c){ore+=c.ore;});
+    var en={id:'s'+Date.now().toString(36),v:2,date:state.data,
+      assenti:g.assList.map(function(x){return x.p.name+(x.a==='M'?' (mattina)':(x.a==='P'?' (pomeriggio)':''));}),
+      nAss:g.assW,tot:g.tot,pct:g.tot?Math.round(g.assW/g.tot*1000)/10:0,
+      scM:g.f.M.scoperte.map(nm),scP:g.f.P.scoperte.map(nm),
+      parziali:g.f.M.parziali.concat(g.f.P.parziali).map(function(x){return x.m.name;}),
+      spost:g.f.M.spost.length+g.f.P.spost.length,
+      fermate:g.fermate.map(function(x){return {n:x.m.name,f:x.f};}),
+      code:g.code.map(function(c){return {n:c.m.name,ore:c.ore};}),oreTurno:ore,
+      anticipi:an,sotto:so};
     state.storico=state.storico.filter(function(x){return x.date!==en.date;});
     state.storico.push(en);save();b.textContent='Salvato ✓';return;
   }
+  if(a==='stop'){var sv=b.dataset.v;if(sv)state.stop[id]=sv;else delete state.stop[id];save();render();return;}
+  if(a==='rot'){state.rot={week:lunedi(state.data),mattina:(sqMattina(state.rot,state.data)==='A'?'B':'A')};save();render();return;}
   if(a==='qadd'){
     var t=document.getElementById('qa').value.split(/\n/);
     t.forEach(function(l){
@@ -437,7 +543,7 @@ document.addEventListener('click',function(e){
     if(s.home&&s.home!==p.home)p.cov[s.home]=2;
     save();render();return;
   }
-  if(a==='pdel'){if(confirm('Eliminare la persona?')){state.persone=state.persone.filter(function(x){return x.id!==id;});state.assenti=state.assenti.filter(function(x){return x!==id;});save();render();}return;}
+  if(a==='pdel'){if(confirm('Eliminare la persona?')){state.persone=state.persone.filter(function(x){return x.id!==id;});delete state.ass[id];save();render();}return;}
   if(a==='sdel'){state.storico=state.storico.filter(function(x){return x.id!==id;});save();render();return;}
   if(a==='crit'){state.mansioni.forEach(function(m){if(/^(banco|pvc|profilatrice|assemblatrice|imballatrice)/i.test(m.name.trim()))m.peso=3;});save();render();return;}
   if(a==='exj'){dl('sostituzioni_backup.json',JSON.stringify(state),'application/json');return;}
@@ -453,6 +559,7 @@ document.addEventListener('change',function(e){
   if(k==='rtarget'){var rr=repOf(id);if(rr){rr.target=Math.max(0,parseInt(el.value,10)||0);save();render();}return;}
   if(k==='rtrack'){if(el.checked){if(!repOf(id))state.reparti.push({mid:id,target:5});}else{state.reparti=state.reparti.filter(function(x){return x.mid!==id;});}save();return;}
   if(k==='mact'){mById(id).active=el.checked;save();return;}
+  if(k==='mturno'){mById(id).turno=el.value;save();return;}
   if(k==='mpeso'){mById(id).peso=parseInt(el.value,10)||1;save();return;}
   if(k==='mnome'){mById(id).name=el.value.trim()||mById(id).name;save();return;}
   if(k==='pnome'){var p=pById(id);p.name=el.value.trim()||p.name;save();return;}
