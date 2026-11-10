@@ -36,6 +36,7 @@ button.d{color:var(--ko)}
 .t-ko{background:var(--kobg);color:var(--ko)}
 .t-ok{background:var(--okbg);color:var(--ok)}
 .t-wa{background:var(--wabg);color:var(--wa)}
+.t-mu{background:var(--bg);color:var(--mu);border:1px solid var(--bd)}
 .seg{display:flex;border:1px solid var(--bd);border-radius:8px;overflow:hidden}
 .seg button{border:0;background:var(--bg);color:var(--mu);padding:7px 9px;font-size:13px}
 .seg button.on{background:var(--ac);color:#fff}
@@ -61,8 +62,6 @@ td.n,th.n{text-align:right}
 
 <script>
 //CORE-START
-function lvl(p,m){return p.home===m.id?2:((p.cov&&p.cov[m.id])||0);}
-function score(p,m){var l=lvl(p,m);if(!l)return 0;return 1000*(m.peso||1)+(l===2?10:4)+(p.home===m.id?1:0);}
 function hungarian(a,n){
   var INF=1e12,u=[],v=[],p=[],way=[],i,j;
   for(i=0;i<=n;i++){u[i]=0;v[i]=0;p[i]=0;way[i]=0;}
@@ -89,46 +88,6 @@ function hungarian(a,n){
   for(j=1;j<=n;j++){if(p[j]>0)ans[p[j]-1]=j-1;}
   return ans;
 }
-function calcolaFascia(att,pres,prev){
-  var res={att:att,pres:pres,assign:{},scoperte:[],parziali:[],spost:[],liberi:[],chains:[],altri:[]};
-  var N=Math.max(att.length,pres.length);
-  if(!N)return res;
-  var cost=[],i,j;
-  for(i=0;i<N;i++){cost[i]=[];for(j=0;j<N;j++){
-    var c=0;
-    if(i<pres.length&&j<att.length){var s=score(pres[i],att[j]);if(s>0){c=-s;if(prev&&prev[att[j].id]===pres[i].id)c-=0.5;}}
-    cost[i][j]=c;
-  }}
-  var ans=hungarian(cost,N),byM={},asgP={};
-  pres.forEach(function(p,i){
-    var j=ans[i];
-    if(j>=0&&j<att.length&&score(p,att[j])>0){byM[att[j].id]=p;asgP[p.id]=att[j];}
-  });
-  att.forEach(function(m){
-    var p=byM[m.id];
-    if(!p)res.scoperte.push(m);else if(lvl(p,m)===1)res.parziali.push({m:m,p:p});
-  });
-  pres.forEach(function(p){
-    var m=asgP[p.id];
-    if(!m)res.liberi.push(p);else if(p.home!==m.id)res.spost.push({p:p,m:m,l:lvl(p,m)});
-  });
-  var seen={};
-  att.forEach(function(m0){
-    if(pres.some(function(p){return p.home===m0.id;}))return;
-    var steps=[],cur=m0,g={};
-    while(cur&&!g[cur.id]){
-      g[cur.id]=1;
-      var q=byM[cur.id];
-      if(!q){steps.push({m:cur});break;}
-      steps.push({m:cur,p:q,l:lvl(q,cur)});seen[q.id]=1;
-      cur=att.filter(function(x){return x.id===q.home;})[0];
-    }
-    res.chains.push({start:m0,steps:steps});
-  });
-  res.altri=res.spost.filter(function(s){return !seen[s.p.id];});
-  res.assign=byM;
-  return res;
-}
 function pad2(n){return (n<10?'0':'')+n;}
 function parseD(s){var p=String(s).split('-');return new Date(+p[0],+p[1]-1,+p[2],12,0,0);}
 function fmtD(d){return d.getFullYear()+'-'+pad2(d.getMonth()+1)+'-'+pad2(d.getDate());}
@@ -138,45 +97,146 @@ function feriali(y){if(_fer[y])return _fer[y];var s={};['01-01','01-06','04-25',
 function isLav(d){var w=d.getDay();if(w===0||w===6)return false;return !feriali(d.getFullYear())[fmtD(d)];}
 function bdays(from,to){var a=parseD(from),b=parseD(to);if(fmtD(a)===fmtD(b))return 0;var sign=1,lo=a,hi=b;if(b<a){sign=-1;lo=b;hi=a;}var n=0,d=new Date(lo.getTime());while(true){d.setDate(d.getDate()+1);if(d>hi)break;if(isLav(d))n++;}return sign*n;}
 function statoRep(d,t){if(d>=t+3)return 'avanti';if(d>=t)return 'ok';if(d>=t-2)return 'rischio';return 'indietro';}
+var W=[1,4,16,64];
 function lunedi(s){var d=parseD(s),w=(d.getDay()+6)%7;d.setDate(d.getDate()-w);return fmtD(d);}
 function sqMattina(rot,date){var a=parseD(lunedi(rot.week)),b=parseD(lunedi(date)),wk=Math.round((b-a)/(7*864e5));return (Math.abs(wk)%2===0)?rot.mattina:(rot.mattina==='A'?'B':'A');}
-function turnoP(st,p){var m=st.mansioni.filter(function(x){return x.id===p.home;})[0];return (m&&m.active&&(m.turno==='A'||m.turno==='B'))?m.turno:'G';}
-function calcolaGiorno(st){
-  var sm=sqMattina(st.rot,st.data),sq={M:sm,P:(sm==='A'?'B':'A')};
-  var out={sq:sq,f:{},code:[],fermate:[],tot:st.persone.length,assW:0,assList:[]};
-  var ass=st.ass||{},stop=st.stop||{},prev=null;
-  st.persone.forEach(function(p){
-    var a=ass[p.id];if(!a)return;
-    var t=turnoP(st,p);if(t!=='G')a='T';
-    out.assW+=(a==='T'?1:0.5);out.assList.push({p:p,a:a});
-  });
-  ['M','P'].forEach(function(f){
-    var att=st.mansioni.filter(function(m){
-      if(!m.active)return false;
-      var t=m.turno||'G';
-      if(t!=='G')return t===sq[f]&&!stop[m.id];
-      var s=stop[m.id];return !(s==='T'||s===f);
-    });
-    var pres=st.persone.filter(function(p){
-      var t=turnoP(st,p),a=ass[p.id];
-      if(t!=='G')return t===sq[f]&&!a;
-      return !(a==='T'||a===f);
-    });
-    var r=calcolaFascia(att,pres,prev);
-    out.f[f]=r;prev={};
-    Object.keys(r.assign).forEach(function(k){prev[k]=r.assign[k].id;});
-    att.forEach(function(m){
-      if((m.turno||'G')==='G')return;
-      var a=r.assign[m.id];
-      if(!a)out.code.push({m:m,f:f,ore:8,p:null});
-      else if(turnoP(st,a)==='G')out.code.push({m:m,f:f,ore:(f==='M'?3:4),p:a});
-    });
-  });
+function mMap(st){var o={};st.mansioni.forEach(function(m){o[m.id]=m;});return o;}
+function turnoP(st,p,mm){var m=(mm||mMap(st))[p.home];return (m&&m.active&&(m.turno==='A'||m.turno==='B'))?m.turno:'G';}
+function mkCtx(st){
+  var mm=mMap(st),gm={},seatsOf={},w={},gc={};
+  (st.gruppi||[]).forEach(function(g){gm[g.id]=g;});
+  st.mansioni.forEach(function(m){if(m.active&&m.gruppo&&gm[m.gruppo])(seatsOf[m.gruppo]=seatsOf[m.gruppo]||[]).push(m);});
   st.mansioni.forEach(function(m){
-    if(!m.active||!stop[m.id])return;
-    out.fermate.push({m:m,f:((m.turno||'G')==='G'?stop[m.id]:'T')});
+    var g=m.gruppo&&gm[m.gruppo];
+    if(g&&seatsOf[g.id]){var i=seatsOf[g.id].indexOf(m),gp=(g.peso==null?3:g.peso);w[m.id]=W[(i>=0&&i<g.min)?gp:Math.max(0,gp-1)];}
+    else w[m.id]=W[Math.max(0,Math.min(3,(m.peso==null?1:m.peso)))];
   });
-  return out;
+  st.persone.forEach(function(p){
+    var o={},h=mm[p.home];
+    if(h&&h.gruppo&&gm[h.gruppo])o[h.gruppo]=2;
+    Object.keys(p.cov||{}).forEach(function(k){var m=mm[k];if(m&&m.gruppo&&gm[m.gruppo])o[m.gruppo]=Math.max(o[m.gruppo]||0,p.cov[k]);});
+    gc[p.id]=o;
+  });
+  return {mm:mm,gm:gm,w:w,gc:gc,seatsOf:seatsOf};
+}
+function lvl(ctx,p,m){
+  if(m.gruppo&&ctx.gm[m.gruppo])return ctx.gc[p.id][m.gruppo]||0;
+  if(p.home===m.id)return 2;
+  var h=ctx.mm[p.home];
+  if(h&&h.gruppo&&ctx.gm[h.gruppo])return 0;
+  return (p.cov&&p.cov[m.id])||0;
+}
+function score(ctx,p,m){var l=lvl(ctx,p,m);if(!l)return 0;return 1000*ctx.w[m.id]+(l===2?10:4)+(p.home===m.id?1:0);}
+function calcolaFascia(att,pres,prev,ctx){
+  var res={assign:{},pers:{},scoperte:[],liberi:[]};
+  var N=Math.max(att.length,pres.length);
+  if(!N)return res;
+  var cost=[],i,j;
+  for(i=0;i<N;i++){cost[i]=[];for(j=0;j<N;j++){
+    var c=0;
+    if(i<pres.length&&j<att.length){var s=score(ctx,pres[i],att[j]);if(s>0){c=-s;if(prev&&prev[att[j].id]===pres[i].id)c-=0.5;}}
+    cost[i][j]=c;
+  }}
+  var ans=hungarian(cost,N);
+  pres.forEach(function(p,i){
+    var j=ans[i];
+    if(j>=0&&j<att.length&&score(ctx,p,att[j])>0){res.assign[att[j].id]=p;res.pers[p.id]=att[j];}
+  });
+  att.forEach(function(m){if(!res.assign[m.id])res.scoperte.push(m);});
+  pres.forEach(function(p){if(!res.pers[p.id])res.liberi.push(p);});
+  return res;
+}
+function winsOf(st,m,sq,eff){
+  var t=m.turno||'G',s=(st.stop||{})[m.id],w;
+  if(s&&t!=='G')return [];
+  if(s==='T')return [];
+  if(t!=='G')return [(t===sq.M)?[5,13]:[13,21]];
+  var hp=st.persone.filter(function(p){return p.home===m.id&&(st.ass||{})[p.id]!=='T';});
+  var pau=hp.length>0&&hp.every(function(p){return eff[p.id]==='pau';});
+  w=pau?[[8,12],[13,17]]:[[8,13],[14,17]];
+  if(s==='M')w=w.filter(function(x){return x[0]>=13;});
+  if(s==='P')w=w.filter(function(x){return x[1]<=13;});
+  return w;
+}
+function segsOf(st,ctx,p,sq,eff){
+  var a=(st.ass||{})[p.id]||'',t=turnoP(st,p,ctx.mm);
+  if(t!=='G'){if(a)return [];return [(t===sq.M)?[5,13]:[13,21]];}
+  var v=eff[p.id]||'std';
+  var S={std:[[8,13,'M'],[14,17,'P']],ant:[[7,13,'M'],[14,16,'P']],pau:[[8,12,'M'],[13,17,'P']]}[v];
+  return S.filter(function(s){return a!=='T'&&a!==s[2];}).map(function(s){return [s[0],s[1]];});
+}
+function runDay(st,ctx,sq,eff){
+  var seats=st.mansioni.filter(function(m){return m.active;}),sw={},bs={},ps={};
+  seats.forEach(function(m){sw[m.id]=winsOf(st,m,sq,eff);sw[m.id].forEach(function(x){bs[x[0]]=1;bs[x[1]]=1;});});
+  st.persone.forEach(function(p){ps[p.id]=segsOf(st,ctx,p,sq,eff);ps[p.id].forEach(function(x){bs[x[0]]=1;bs[x[1]]=1;});});
+  var B=Object.keys(bs).map(Number).sort(function(a,b){return a-b;}),runs=[],prev=null;
+  for(var i=0;i+1<B.length;i++){
+    var a=B[i],b=B[i+1];
+    var att=seats.filter(function(m){return sw[m.id].some(function(x){return x[0]<=a&&x[1]>=b;});});
+    var pres=st.persone.filter(function(p){return ps[p.id].some(function(x){return x[0]<=a&&x[1]>=b;});});
+    if(!att.length&&!pres.length)continue;
+    var r=calcolaFascia(att,pres,prev,ctx);
+    r.a=a;r.b=b;r.att=att;r.pres=pres;runs.push(r);
+    prev={};Object.keys(r.assign).forEach(function(k){prev[k]=r.assign[k].id;});
+  }
+  return runs;
+}
+function mergeR(a){a=a.slice().sort(function(x,y){return x[0]-y[0];});var o=[];a.forEach(function(r){var l=o[o.length-1];if(l&&l[1]===r[0])l[1]=r[1];else o.push([r[0],r[1]]);});return o;}
+function analizza(st,ctx,runs){
+  var gaps={},gr={},grHours={},ore=0,oreCrit=0,oreBassa=0,mov={};
+  runs.forEach(function(r){
+    var h=r.b-r.a;
+    r.scoperte.forEach(function(m){
+      if(m.gruppo&&ctx.gm[m.gruppo])return;
+      (gaps[m.id]=gaps[m.id]||[]).push([r.a,r.b]);
+      if(ctx.w[m.id]<=W[0])oreBassa+=h;else{ore+=h;if(ctx.w[m.id]>=W[3])oreCrit+=h;}
+    });
+    Object.keys(ctx.gm).forEach(function(gid){
+      var g=ctx.gm[gid],seats=r.att.filter(function(m){return m.gruppo===gid;});
+      if(!seats.length)return;
+      var n=seats.filter(function(m){return r.assign[m.id];}).length,L=(gr[gid]=gr[gid]||[]),l=L[L.length-1];
+      if(l&&l.b===r.a&&l.n===n&&l.tot===seats.length)l.b=r.b;else L.push({a:r.a,b:r.b,n:n,tot:seats.length});
+      var below=Math.max(0,Math.min(g.min,seats.length)-n);
+      if(below){ore+=below*h;oreCrit+=below*h;grHours[gid]=(grHours[gid]||0)+below*h;}
+    });
+    r.pres.forEach(function(p){
+      var s=r.pers[p.id]||null,L=(mov[p.id]=mov[p.id]||[]),l=L[L.length-1];
+      if(l&&l.b===r.a&&((l.m&&s&&l.m.id===s.id)||(!l.m&&!s)))l.b=r.b;else L.push({a:r.a,b:r.b,m:s});
+    });
+  });
+  Object.keys(gaps).forEach(function(k){gaps[k]=mergeR(gaps[k]);});
+  return {gaps:gaps,gr:gr,grHours:grHours,ore:ore,oreCrit:oreCrit,oreBassa:oreBassa,mov:mov};
+}
+function calcolaGiorno(st){
+  var ctx=mkCtx(st),sm=sqMattina(st.rot,st.data),sq={M:sm,P:(sm==='A'?'B':'A')};
+  var ov=st.orario||{},eff={},used={},auto=[];
+  st.persone.forEach(function(p){if(ov[p.id]&&ov[p.id]!=='auto'){eff[p.id]=ov[p.id];used[p.id]=1;}});
+  var runs=runDay(st,ctx,sq,eff);
+  st.mansioni.forEach(function(m){
+    var tipo=m.cop;
+    if(!m.active||!tipo||(m.turno||'G')==='G'||(st.stop||{})[m.id])return;
+    var gap=runs.some(function(r){return r.scoperte.indexOf(m)>=0&&(tipo==='ant'?r.b<=8:(r.a>=13&&r.b<=14));});
+    if(!gap)return;
+    var cand=null;
+    runs.forEach(function(r){
+      if(cand)return;
+      var ok=(tipo==='ant')?(r.a>=8&&r.b<=13):(r.a>=14&&r.b<=17),p=r.assign[m.id];
+      if(ok&&p&&turnoP(st,p,ctx.mm)==='G'&&!used[p.id]&&!(st.ass||{})[p.id])cand=p;
+    });
+    if(!cand){
+      st.persone.forEach(function(p){
+        if(used[p.id]||(st.ass||{})[p.id]||turnoP(st,p,ctx.mm)!=='G')return;
+        var l=lvl(ctx,p,m);
+        if(l&&(!cand||l>lvl(ctx,cand,m)))cand=p;
+      });
+    }
+    if(cand){used[cand.id]=1;eff[cand.id]=tipo;auto.push({p:cand,v:tipo,m:m});}
+  });
+  if(auto.length)runs=runDay(st,ctx,sq,eff);
+  var ass=st.ass||{},assW=0,assList=[],fermate=[];
+  st.persone.forEach(function(p){var a=ass[p.id];if(!a)return;if(turnoP(st,p,ctx.mm)!=='G')a='T';assW+=(a==='T'?1:0.5);assList.push({p:p,a:a});});
+  st.mansioni.forEach(function(m){var s=(st.stop||{})[m.id];if(m.active&&s)fermate.push({m:m,f:((m.turno||'G')==='G'?s:'T')});});
+  return {sq:sq,ctx:ctx,runs:runs,an:analizza(st,ctx,runs),auto:auto,eff:eff,tot:st.persone.length,assW:assW,assList:assList,fermate:fermate};
 }
 //CORE-END
 
@@ -185,8 +245,21 @@ var NOMI=['Profilatrice 1','Profilatrice 2','Assemblatrice 1','Assemblatrice 2',
 function oggi(){var d=new Date(),z=function(n){return(n<10?'0':'')+n;};return d.getFullYear()+'-'+z(d.getMonth()+1)+'-'+z(d.getDate());}
 function defState(){
   var m=[];
-  for(var i=0;i<35;i++)m.push({id:'m'+(i+1),name:NOMI[i]||('Mansione '+(i+1)),active:i<NOMI.length,peso:1,turno:defTurno(NOMI[i]||'')});
-  return {mansioni:m,persone:[],ass:{},stop:{},rot:{week:lunedi(oggi()),mattina:'A'},data:oggi(),storico:[],reparti:defReparti(m),consegne:{}};
+  for(var i=0;i<35;i++)m.push({id:'m'+(i+1),name:NOMI[i]||('Mansione '+(i+1)),active:i<NOMI.length,peso:1,turno:defTurno(NOMI[i]||''),gruppo:'',cop:''});
+  var st={mansioni:m,persone:[],ass:{},stop:{},orario:{},rot:{week:lunedi(oggi()),mattina:'A'},data:oggi(),storico:[],reparti:defReparti(m),consegne:{}};
+  migraGruppi(st);
+  return st;
+}
+function migraGruppi(st){
+  if(!st.gruppi){
+    st.gruppi=[{id:'gA',name:'Alluminio sq. A',min:2,peso:3},{id:'gB',name:'Alluminio sq. B',min:2,peso:3}];
+    st.mansioni.forEach(function(m){var x=/^(profilatrice|assemblatrice|imballatrice)\s*([12])$/i.exec(m.name.trim());if(x)m.gruppo=(x[2]==='1'?'gA':'gB');});
+  }
+  st.mansioni.forEach(function(m){
+    if(m.gruppo===undefined)m.gruppo='';
+    if(m.cop===undefined){var x=/^pvc\s*([12])$/i.exec(m.name.trim());m.cop=x?(x[1]==='1'?'ant':'pau'):'';}
+    if(m.peso==null)m.peso=1;
+  });
 }
 function defReparti(ms){
   var n=['Taglio 1','Taglio 2','Taglio 3','Rulli','Accessori','Guide+terminali 1','Guide+terminali 2','Sporgere'],o=[];
@@ -195,7 +268,9 @@ function defReparti(ms){
 }
 function defTurno(n){var x=/^(profilatrice|assemblatrice|imballatrice|pvc)\s*([12])$/i.exec(String(n).trim());return x?(x[2]==='1'?'A':'B'):'G';}
 function ensure(){
-  state.mansioni.forEach(function(m){if(!m.turno)m.turno=defTurno(m.name);if(!m.peso)m.peso=1;});
+  state.mansioni.forEach(function(m){if(!m.turno)m.turno=defTurno(m.name);});
+  migraGruppi(state);
+  if(!state.orario)state.orario={};
   if(!state.reparti)state.reparti=defReparti(state.mansioni);
   if(!state.consegne)state.consegne={};
   if(!state.storico)state.storico=[];
@@ -204,7 +279,7 @@ function ensure(){
   if(!state.stop)state.stop={};
   var t=oggi();
   if(!state.rot)state.rot={week:lunedi(t),mattina:'A'};
-  if(state.data!==t){state.data=t;state.ass={};state.stop={};}
+  if(state.data!==t){state.data=t;state.ass={};state.stop={};state.orario={};}
   save();
 }
 var state=defState(),ui={tab:'giorno',open:{}};
@@ -258,6 +333,9 @@ function vReparti(){
 
 var FN={M:'mattina',P:'pomeriggio',T:'tutto il giorno'};
 function nStop(){return Object.keys(state.stop||{}).filter(function(k){var m=mById(k);return m&&m.active;}).length;}
+function rg(l){return l.map(function(r){return r[0]+'-'+r[1];}).join(', ');}
+function hrs(l){var h=0;l.forEach(function(r){h+=r[1]-r[0];});return h;}
+function tipoOra(v){return v==='ant'?'7-13 e 14-16':'8-12 e 13-17';}
 function vGiorno(){
   if(!state.persone.length){
     return '<div class="card">Non ci sono ancora persone. Vai su <b>Persone</b> e aggiungile (anche con "Crea una persona per mansione").</div>';
@@ -265,7 +343,7 @@ function vGiorno(){
   var g=calcolaGiorno(state),h='';
   h+='<div class="card"><div class="row"><input type="date" id="dd" data-chg="data" value="'+esc(state.data)+'"></div>';
   h+='<div class="row" style="margin-top:8px"><div class="mu" style="flex:1">Turno 5-13: <b>squadra '+g.sq.M+'</b><br>Turno 13-21: <b>squadra '+g.sq.P+'</b></div><button class="b" data-act="rot">Inverti</button></div>';
-  h+='<h2 style="margin-top:12px">Tocca gli assenti</h2><div class="mu" style="margin-bottom:6px">1 tocco = tutto il giorno · 2 = solo mattina · 3 = solo pomeriggio</div><div class="chips">';
+  h+='<h2 style="margin-top:12px">Tocca gli assenti</h2><div class="mu" style="margin-bottom:6px">Giornalieri: 1 tocco = tutto il giorno · 2 = solo mattina · 3 = solo pomeriggio. Turnisti: assente o presente.</div><div class="chips">';
   state.persone.forEach(function(p){
     var a=state.ass[p.id]||'';
     if(a&&turnoP(state,p)!=='G')a='T';
@@ -284,46 +362,64 @@ function vGiorno(){
     }).join('')+'</div></div>';
   });
   h+='</div></details>';
+  var gp=state.persone.filter(function(p){return turnoP(state,p)==='G'&&state.ass[p.id]!=='T';});
+  h+='<details class="card" data-id="__or" '+(ui.open.__or?'open':'')+'><summary class="row"><b style="flex:1">Orari dei giornalieri</b><span class="mu">'+(g.auto.length?g.auto.length+' cambi':'standard')+'</span></summary><div style="margin-top:8px"><div class="mu">Standard 8-13 e 14-17. Se un PVC è scoperto l\'app anticipa un giornaliero o sposta la pausa da sola (Auto). Qui puoi forzare un orario.</div>';
+  gp.forEach(function(p){
+    var cur=state.orario[p.id]||'auto',ef=g.eff[p.id];
+    h+='<div class="mrow"><span class="nm">'+esc(p.name)+((ef&&cur==='auto')?' <span class="tag t-wa">'+(ef==='ant'?'7-16':'pausa 12')+'</span>':'')+'</span><select data-chg="ori" data-id="'+p.id+'" style="width:132px;padding:8px 4px">'+[['auto','Auto'],['std','Standard'],['ant','Anticipo 7-16'],['pau','Pausa alle 12']].map(function(o){return '<option value="'+o[0]+'"'+(cur===o[0]?' selected':'')+'>'+o[1]+'</option>';}).join('')+'</select></div>';
+  });
+  h+='</div></details>';
   h+=vRis(g);
   return h;
 }
-function secF(r){
-  var h='';
-  if(!r.att.length)return '<div class="card mu">Nessuna mansione da coprire.</div>';
-  if(r.pres.length<r.att.length)h+='<div class="warn">Presenti ('+r.pres.length+') meno delle mansioni da coprire ('+r.att.length+').</div>';
-  if(r.scoperte.length)h+='<div class="card">'+r.scoperte.map(function(m){return '<div style="margin:3px 0"><span class="tag t-ko">'+mn(m)+'</span>'+repTag(m.id)+'</div>';}).join('')+'</div>';
-  else h+='<div class="card"><span class="tag t-ok">Tutte coperte</span></div>';
-  if(r.parziali.length)h+='<div class="card"><div class="mu">Coperte solo in parte</div>'+r.parziali.map(function(x){return '<div><span class="tag t-wa">'+mn(x.m)+'</span> ← '+esc(x.p.name)+'</div>';}).join('')+'</div>';
-  r.chains.forEach(function(c){
-    h+='<div class="card"><div class="chain">';
-    c.steps.forEach(function(s){
-      if(s.p)h+='<div>'+mn(s.m)+' ← <b>'+esc(s.p.name)+'</b>'+(s.l===1?' <span class="tag t-wa">parz.</span>':'')+'</div>';
-      else h+='<div>'+mn(s.m)+' <span class="tag t-ko">scoperta</span></div>';
-    });
-    h+='</div></div>';
-  });
-  if(r.altri.length)h+='<div class="card"><div class="mu">Altri spostamenti</div>'+r.altri.map(function(s){return '<div>'+esc(s.p.name)+' → '+mn(s.m)+(s.l===1?' <span class="tag t-wa">parz.</span>':'')+'</div>';}).join('')+'</div>';
-  if(r.liberi.length)h+='<div class="card"><div class="mu">Presenti senza mansione (disponibili)</div>'+r.liberi.map(function(p){return esc(p.name);}).join(', ')+'</div>';
-  return h;
-}
 function vRis(g){
-  var h='',nsc=g.f.M.scoperte.length+g.f.P.scoperte.length,ore=0;
-  g.code.forEach(function(c){ore+=c.ore;});
-  var pct=g.tot?Math.round(g.assW/g.tot*1000)/10:0;
-  h+='<div class="kpi"><div><b>'+g.assW+'/'+g.tot+'</b><span>assenti ('+pct+'%)</span></div><div><b>'+nsc+'</b><span>mezze giornate scoperte</span></div><div><b>'+ore+' h</b><span>turni senza operatore</span></div></div>';
-  var a=secF(g.f.M),b=secF(g.f.P);
-  if(a===b)h+='<h2>Tutto il giorno</h2>'+a;
-  else h+='<h2>Mattina 8-13 · in turno squadra '+g.sq.M+'</h2>'+a+'<h2>Pomeriggio 13-17 · in turno squadra '+g.sq.P+'</h2>'+b;
-  if(g.code.length){
-    h+='<h2>Turni: ore senza operatore</h2><div class="card">'+g.code.map(function(c){
-      if(!c.p)return '<div style="margin:3px 0"><span class="tag t-ko">'+mn(c.m)+'</span> tutto il turno scoperto (8 h)</div>';
-      return '<div style="margin:3px 0"><span class="tag t-wa">'+mn(c.m)+'</span> '+(c.f==='M'?'5-8':'17-21')+' scoperta ('+c.ore+' h), '+(c.f==='M'?'8-13':'13-17')+' coperta da <b>'+esc(c.p.name)+'</b></div>';
+  var h='',an=g.an,ctx=g.ctx,pct=g.tot?Math.round(g.assW/g.tot*1000)/10:0;
+  h+='<div class="kpi"><div><b>'+g.assW+'/'+g.tot+'</b><span>assenti ('+pct+'%)</span></div><div><b>'+an.ore+' h</b><span>ore scoperte</span></div><div><b>'+an.oreCrit+' h</b><span>di cui critiche</span></div></div>';
+  if(an.oreBassa)h+='<div class="mu" style="margin:6px 4px">Più '+an.oreBassa+' h su mansioni a priorità bassa, lasciate scoperte per scelta.</div>';
+  var gl='';
+  Object.keys(ctx.gm).forEach(function(gid){
+    var L=an.gr[gid]||[];if(!L.length)return;
+    var gg=ctx.gm[gid];
+    gl+='<div style="margin:6px 0"><b>'+esc(gg.name)+'</b> <span class="mu">minimo '+gg.min+'</span><br>'+L.map(function(l){
+      var cls=l.n<gg.min?'t-ko':(l.n<l.tot?'t-wa':'t-ok');
+      return '<span class="tag '+cls+'">'+l.a+'-'+l.b+' · '+l.n+'/'+l.tot+'</span>';
+    }).join(' ')+'</div>';
+  });
+  if(gl)h+='<h2>Linee interscambiabili</h2><div class="card">'+gl+'<div class="mu">Sotto le 3 persone la linea produce meno ma lavora. Sotto il minimo è rosso.</div></div>';
+  if(g.auto.length){
+    h+='<h2>Cambi d\'orario</h2><div class="card">'+g.auto.map(function(x){
+      return '<div style="margin:4px 0"><b>'+esc(x.p.name)+'</b> · '+tipoOra(x.v)+' <span class="mu">('+(x.v==='ant'?'anticipo':'pausa alle 12')+' per coprire '+mn(x.m)+')</span></div>';
     }).join('')+'</div>';
   }
+  var mv=[],lb=[];
+  state.persone.forEach(function(p){
+    var segs=an.mov[p.id]||[],hm=ctx.mm[p.home];
+    var moved=segs.some(function(s){return s.m&&s.m.id!==p.home&&!(hm&&hm.gruppo&&s.m.gruppo===hm.gruppo);});
+    if(moved)mv.push({p:p,hm:hm,segs:segs});
+    var fr=segs.filter(function(s){return !s.m;});
+    if(fr.length)lb.push({p:p,fr:fr});
+  });
+  h+='<h2>Spostamenti</h2>';
+  if(mv.length){
+    h+='<div class="card">'+mv.map(function(x){
+      return '<div style="margin:6px 0"><b>'+esc(x.p.name)+'</b> <span class="mu">base '+(x.hm?mn(x.hm):'—')+'</span><br>'+x.segs.map(function(s){return s.a+'-'+s.b+' → '+(s.m?mn(s.m):'<span class="mu">libero</span>');}).join(' &nbsp;·&nbsp; ')+'</div>';
+    }).join('')+'</div>';
+  }else h+='<div class="card mu">Nessuno si sposta.</div>';
+  h+='<h2>Mansioni scoperte</h2>';
+  var ks=Object.keys(an.gaps).sort(function(a,b){var d=ctx.w[b]-ctx.w[a];return d||hrs(an.gaps[b])-hrs(an.gaps[a]);});
+  if(ks.length){
+    h+='<div class="card">'+ks.map(function(k){
+      var m=ctx.mm[k],w=ctx.w[k],cls=w>=16?'t-ko':(w>=4?'t-wa':'t-mu');
+      return '<div style="margin:4px 0"><span class="tag '+cls+'">'+mn(m)+'</span> '+rg(an.gaps[k])+' <span class="mu">('+hrs(an.gaps[k])+' h)</span>'+repTag(k)+'</div>';
+    }).join('')+'<div class="mu" style="margin-top:6px">Rosso: alta o critica · giallo: normale · grigio: bassa.</div></div>';
+  }else h+='<div class="card"><span class="tag t-ok">Tutte coperte</span></div>';
   if(g.fermate.length){
     h+='<h2>Ferme per tua scelta</h2><div class="card">'+g.fermate.map(function(x){return '<span class="tag t-wa">'+mn(x.m)+' · '+((x.m.turno||'G')==='G'?FN[x.f]:'turno')+'</span> ';}).join('')+'</div>';
   }
-  if(nsc){
+  if(lb.length){
+    h+='<h2>Disponibili</h2><div class="card"><div class="mu">Presenti senza una mansione da coprire:</div>'+lb.map(function(x){return '<div style="margin:3px 0"><b>'+esc(x.p.name)+'</b> '+rg(x.fr.map(function(s){return [s.a,s.b];}))+'</div>';}).join('')+'</div>';
+  }
+  if(an.ore){
     var av=(state.reparti||[]).filter(function(rp){var m=mById(rp.mid),i=(m&&m.active)?repInfo(rp,state.data):null;return i&&i.stato==='avanti';});
     if(av.length)h+='<div class="card"><div class="mu">Reparti avanti, che puoi fermare o da cui puoi attingere:</div>'+av.map(function(rp){var i=repInfo(rp,state.data);return '<span class="tag t-ok">'+mn(mById(rp.mid))+' '+sg(i.days)+' gg</span> ';}).join('')+'</div>';
   }
@@ -332,10 +428,21 @@ function vRis(g){
 
 function vMansioni(){
   var n=state.mansioni.filter(function(m){return m.active;}).length;
-  var h='<div class="card"><b>'+n+' attive</b> su 35. Togli la spunta alle mansioni che non sono realmente operative: non vengono né coperte né contate.<div class="mu" style="margin-top:6px"><b>Priorità</b>: quando i buchi sono più delle persone, l\'app tappa prima le mansioni con priorità più alta, anche togliendo gente a quelle più basse. Con priorità tutte uguali non sposta nessuno se il numero di scoperte non migliora.</div><div class="mu" style="margin-top:6px"><b>Orario</b>: Giornata = 8-17. Squadra A e B = mansioni a turno (5-13 / 13-21): chi ha quella mansione come base è un turnista di quella squadra.</div><div style="margin-top:8px"><button class="b" data-act="crit">Imposta Critica: Banco, PVC, Profilatrici, Assemblatrici, Imballatrici</button></div></div><div class="card">';
+  var h='<div class="card"><b>'+n+' attive</b> su 35. Togli la spunta alle mansioni che non sono realmente operative: non vengono né coperte né contate.<div class="mu" style="margin-top:6px"><b>Priorità</b>: Bassa si lascia scoperta per prima, Critica mai. Una persona si sposta solo se così guadagna una mansione di priorità più alta. Con priorità uguali non sposta nessuno.</div><div class="mu" style="margin-top:6px"><b>Turno</b>: Giornata = 8-13 e 14-17. Squadra A e B = 5-13 / 13-21: chi ha quella mansione come base è un turnista di quella squadra.</div><div class="mu" style="margin-top:6px"><b>Gruppo</b>: mansioni i cui titolari sono interscambiabili tra loro e non vengono spostati fuori. Il gruppo ha un minimo di persone: i posti oltre il minimo hanno priorità più bassa. La priorità della singola mansione vale solo fuori dai gruppi.</div><div class="mu" style="margin-top:6px"><b>Copertura speciale</b> (solo turni): se la mansione è scoperta, l\'app anticipa un giornaliero alle 7 (7-13 e 14-16) oppure gli sposta la pausa alle 12 (8-12 e 13-17).</div><div style="margin-top:8px"><button class="b" data-act="crit">Imposta Critica: Banco e PVC</button></div></div>';
+  h+='<div class="card"><b>Gruppi</b>';
+  (state.gruppi||[]).forEach(function(g){
+    h+='<div class="mrow"><span class="nm">'+esc(g.name)+'</span><span class="mu">minimo</span><input type="number" min="0" max="9" data-chg="gmin" data-id="'+g.id+'" value="'+g.min+'" style="width:56px;padding:8px;border:1px solid var(--bd);border-radius:8px;background:var(--bg);color:var(--tx);font-size:16px"></div>';
+  });
+  h+='</div><div class="card">';
+  var sel='flex:1 1 40%;min-width:0;padding:8px 4px';
   state.mansioni.forEach(function(m){
-    var pe=m.peso||1,tu=m.turno||'G';
-    h+='<div class="mrow" style="flex-wrap:wrap"><input type="checkbox" data-chg="mact" data-id="'+m.id+'" '+(m.active?'checked':'')+' style="width:22px;height:22px"><input class="nm" type="text" data-chg="mnome" data-id="'+m.id+'" value="'+esc(m.name)+'"><div class="row" style="width:100%;padding-left:30px"><select data-chg="mpeso" data-id="'+m.id+'" style="padding:8px 4px">'+[[1,'Normale'],[2,'Alta'],[3,'Critica']].map(function(o){return '<option value="'+o[0]+'"'+(pe===o[0]?' selected':'')+'>'+o[1]+'</option>';}).join('')+'</select><select data-chg="mturno" data-id="'+m.id+'" style="padding:8px 4px">'+[['G','Giornata'],['A','Turno sq. A'],['B','Turno sq. B']].map(function(o){return '<option value="'+o[0]+'"'+(tu===o[0]?' selected':'')+'>'+o[1]+'</option>';}).join('')+'</select></div></div>';
+    var pe=(m.peso==null?1:m.peso),tu=m.turno||'G';
+    h+='<div class="mrow" style="flex-wrap:wrap"><input type="checkbox" data-chg="mact" data-id="'+m.id+'" '+(m.active?'checked':'')+' style="width:22px;height:22px"><input class="nm" type="text" data-chg="mnome" data-id="'+m.id+'" value="'+esc(m.name)+'"><div class="row" style="width:100%;padding-left:30px;flex-wrap:wrap">';
+    h+='<select data-chg="mpeso" data-id="'+m.id+'" style="'+sel+'">'+[[0,'Bassa'],[1,'Normale'],[2,'Alta'],[3,'Critica']].map(function(o){return '<option value="'+o[0]+'"'+(pe===o[0]?' selected':'')+'>'+o[1]+'</option>';}).join('')+'</select>';
+    h+='<select data-chg="mturno" data-id="'+m.id+'" style="'+sel+'">'+[['G','Giornata'],['A','Turno sq. A'],['B','Turno sq. B']].map(function(o){return '<option value="'+o[0]+'"'+(tu===o[0]?' selected':'')+'>'+o[1]+'</option>';}).join('')+'</select>';
+    h+='<select data-chg="mgruppo" data-id="'+m.id+'" style="'+sel+'"><option value="">Nessun gruppo</option>'+(state.gruppi||[]).map(function(g){return '<option value="'+g.id+'"'+(m.gruppo===g.id?' selected':'')+'>'+esc(g.name)+'</option>';}).join('')+'</select>';
+    if(tu!=='G')h+='<select data-chg="mcop" data-id="'+m.id+'" style="'+sel+'">'+[['','Cop. speciale: no'],['ant','Anticipo 7-16'],['pau','Pausa alle 12']].map(function(o){return '<option value="'+o[0]+'"'+((m.cop||'')===o[0]?' selected':'')+'>'+o[1]+'</option>';}).join('')+'</select>';
+    h+='</div></div>';
   });
   return h+'</div>';
 }
@@ -371,26 +478,31 @@ function vPersone(){
 function vStorico(){
   var s=state.storico.slice().sort(function(a,b){return a.date<b.date?1:-1;});
   if(!s.length)return '<div class="card">Nessun giorno salvato. Dalla scheda Giorno premi "Salva giorno".</div>';
-  var cnt={},fer={},tot=s.length,sp=0,sa=0,ore=0;
+  var cnt={},ore={},fer={},tot=s.length,sp=0,oreT=0,oreC=0;
   function nA(e){return e.nAss!=null?e.nAss:e.assenti.length;}
   s.forEach(function(e){
-    sp+=e.pct;sa+=nA(e);ore+=(e.oreTurno||0);
-    if(e.v===2){
-      (e.scM||[]).concat(e.scP||[]).forEach(function(n){cnt[n]=(cnt[n]||0)+1;});
-      (e.fermate||[]).forEach(function(x){fer[x.n]=(fer[x.n]||0)+(x.f==='T'?2:1);});
+    sp+=e.pct;
+    if(e.v===3){
+      oreT+=(e.ore||0);oreC+=(e.oreCrit||0);
+      (e.sc||[]).forEach(function(x){cnt[x.n]=(cnt[x.n]||0)+1;ore[x.n]=(ore[x.n]||0)+x.h;});
+      (e.fermate||[]).forEach(function(x){fer[x.n]=(fer[x.n]||0)+1;});
+    }else if(e.v===2){
+      var u={};(e.scM||[]).concat(e.scP||[]).forEach(function(n){u[n]=1;});
+      Object.keys(u).forEach(function(n){cnt[n]=(cnt[n]||0)+1;});
+      (e.fermate||[]).forEach(function(x){fer[x.n]=(fer[x.n]||0)+1;});
     }else{
-      (e.scoperte||[]).forEach(function(n){cnt[n]=(cnt[n]||0)+2;});
+      (e.scoperte||[]).forEach(function(n){cnt[n]=(cnt[n]||0)+1;});
     }
   });
-  var h='<div class="kpi"><div><b>'+tot+'</b><span>giorni salvati</span></div><div><b>'+(Math.round(sp/tot*10)/10)+'%</b><span>assenza media</span></div><div><b>'+ore+' h</b><span>turni senza operatore</span></div></div>';
-  var rows=Object.keys(cnt).sort(function(a,b){return cnt[b]-cnt[a];});
+  var h='<div class="kpi"><div><b>'+tot+'</b><span>giorni salvati</span></div><div><b>'+(Math.round(sp/tot*10)/10)+'%</b><span>assenza media</span></div><div><b>'+oreT+' h</b><span>ore scoperte ('+oreC+' critiche)</span></div></div>';
+  var rows=Object.keys(cnt).sort(function(a,b){return (ore[b]||0)-(ore[a]||0)||cnt[b]-cnt[a];});
   h+='<h2>Mansioni scoperte più spesso</h2><div class="card">';
-  if(rows.length){h+='<table><tr><th>Mansione</th><th class="n">Mezze giornate</th><th class="n">%</th></tr>'+rows.map(function(n){return '<tr><td>'+esc(n)+'</td><td class="n">'+cnt[n]+'</td><td class="n">'+Math.round(cnt[n]/(tot*2)*100)+'%</td></tr>';}).join('')+'</table>';}
+  if(rows.length){h+='<table><tr><th>Mansione</th><th class="n">Giorni</th><th class="n">%</th><th class="n">Ore</th></tr>'+rows.map(function(n){return '<tr><td>'+esc(n)+'</td><td class="n">'+cnt[n]+'</td><td class="n">'+Math.round(cnt[n]/tot*100)+'%</td><td class="n">'+(ore[n]!=null?ore[n]:'–')+'</td></tr>';}).join('')+'</table><div class="mu" style="margin-top:6px">Le ore sono contate dai giorni salvati con il calcolo a orari (dal 10/11). Prima si contavano solo i giorni.</div>';}
   else h+='Nessuna scopertura nei giorni salvati.';
   h+='</div>';
   var fr=Object.keys(fer).sort(function(a,b){return fer[b]-fer[a];});
   if(fr.length){
-    h+='<h2>Ferme per tua scelta</h2><div class="card"><table><tr><th>Mansione</th><th class="n">Mezze giornate</th></tr>'+fr.map(function(n){return '<tr><td>'+esc(n)+'</td><td class="n">'+fer[n]+'</td></tr>';}).join('')+'</table></div>';
+    h+='<h2>Ferme per tua scelta</h2><div class="card"><table><tr><th>Mansione</th><th class="n">Giorni</th></tr>'+fr.map(function(n){return '<tr><td>'+esc(n)+'</td><td class="n">'+fer[n]+'</td></tr>';}).join('')+'</table></div>';
   }
   var sc={},dn={};
   s.forEach(function(e){Object.keys(e.anticipi||{}).forEach(function(n){dn[n]=(dn[n]||0)+1;});(e.sotto||[]).forEach(function(n){sc[n]=(sc[n]||0)+1;});});
@@ -404,12 +516,15 @@ function vStorico(){
     h+='<div class="card"><div class="row"><b style="flex:1">'+esc(e.date)+'</b><span class="mu">'+nA(e)+' assenti ('+e.pct+'%)</span><button class="b d" data-act="sdel" data-id="'+e.id+'">✕</button></div>';
     h+='<div class="mu">Assenti: '+(e.assenti.map(esc).join(', ')||'nessuno')+'</div>';
     if(e.anticipi&&Object.keys(e.anticipi).length)h+='<div class="mu" style="margin:4px 0">Anticipi: '+Object.keys(e.anticipi).map(function(n){return esc(n)+' '+sg(e.anticipi[n]);}).join(' · ')+'</div>';
-    if(e.v===2){
+    if(e.v===3){
+      h+='<div style="margin:4px 0">'+((e.sc||[]).length?e.sc.map(function(x){return '<span class="tag t-ko">'+esc(x.n)+' '+x.h+' h</span> ';}).join(' '):'<span class="tag t-ok">tutte coperte</span>')+'</div>';
+      h+='<div class="mu">Ore scoperte '+e.ore+' ('+e.oreCrit+' critiche)'+(e.oreBassa?' · più '+e.oreBassa+' h su priorità bassa':'')+'</div>';
+      if((e.cambi||[]).length)h+='<div class="mu" style="margin-top:4px">Cambi d\'orario: '+e.cambi.map(function(c){return esc(c.n)+' ('+(c.v==='ant'?'7-16':'pausa 12')+')';}).join(' · ')+'</div>';
+      if((e.fermate||[]).length)h+='<div class="mu" style="margin-top:4px">Ferme per scelta: '+e.fermate.map(function(x){return esc(x.n)+' ('+FN[x.f]+')';}).join(' · ')+'</div>';
+    }else if(e.v===2){
       var m=e.scM||[],p=e.scP||[];
       if(m.join('|')===p.join('|'))h+='<div>'+tags(m)+'</div>';
       else h+='<div style="margin:3px 0"><span class="mu">Mattina:</span> '+tags(m)+'</div><div style="margin:3px 0"><span class="mu">Pomeriggio:</span> '+tags(p)+'</div>';
-      if((e.code||[]).length)h+='<div class="mu" style="margin-top:4px">Turni senza operatore: '+e.code.map(function(c){return esc(c.n)+' '+c.ore+' h';}).join(' · ')+'</div>';
-      if((e.fermate||[]).length)h+='<div class="mu" style="margin-top:4px">Ferme per scelta: '+e.fermate.map(function(x){return esc(x.n)+' ('+FN[x.f]+')';}).join(' · ')+'</div>';
     }else{
       h+='<div>'+tags(e.scoperte||[])+'</div>';
     }
@@ -497,20 +612,19 @@ document.addEventListener('click',function(e){
   if(a==='ass'){p=pById(id);var ca=state.ass[id]||'',nx;if(turnoP(state,p)!=='G')nx=ca?'':'T';else nx={'':'T',T:'M',M:'P',P:''}[ca];if(nx)state.ass[id]=nx;else delete state.ass[id];save();render();return;}
   if(a==='noass'){state.ass={};save();render();return;}
   if(a==='salvag'){
-    var g=calcolaGiorno(state);
-    var an={},so=[];
-    (state.reparti||[]).forEach(function(rp){var m=mById(rp.mid);if(!m||!m.active)return;var i=repInfo(rp,state.data);if(!i)return;an[m.name]=i.days;if(i.days<rp.target)so.push(m.name);});
-    var nm=function(m){return m.name;},ore=0;
-    g.code.forEach(function(c){ore+=c.ore;});
-    var en={id:'s'+Date.now().toString(36),v:2,date:state.data,
+    var g=calcolaGiorno(state),ctx=g.ctx;
+    var antc={},so=[];
+    (state.reparti||[]).forEach(function(rp){var m=mById(rp.mid);if(!m||!m.active)return;var i=repInfo(rp,state.data);if(!i)return;antc[m.name]=i.days;if(i.days<rp.target)so.push(m.name);});
+    var sc=[];
+    Object.keys(g.an.gaps).forEach(function(k){if(ctx.w[k]<=W[0])return;sc.push({n:ctx.mm[k].name,h:hrs(g.an.gaps[k])});});
+    Object.keys(g.an.grHours).forEach(function(k){sc.push({n:ctx.gm[k].name,h:g.an.grHours[k]});});
+    var en={id:'s'+Date.now().toString(36),v:3,date:state.data,
       assenti:g.assList.map(function(x){return x.p.name+(x.a==='M'?' (mattina)':(x.a==='P'?' (pomeriggio)':''));}),
       nAss:g.assW,tot:g.tot,pct:g.tot?Math.round(g.assW/g.tot*1000)/10:0,
-      scM:g.f.M.scoperte.map(nm),scP:g.f.P.scoperte.map(nm),
-      parziali:g.f.M.parziali.concat(g.f.P.parziali).map(function(x){return x.m.name;}),
-      spost:g.f.M.spost.length+g.f.P.spost.length,
+      sc:sc,ore:g.an.ore,oreCrit:g.an.oreCrit,oreBassa:g.an.oreBassa,
+      cambi:g.auto.map(function(x){return {n:x.p.name,v:x.v};}),
       fermate:g.fermate.map(function(x){return {n:x.m.name,f:x.f};}),
-      code:g.code.map(function(c){return {n:c.m.name,ore:c.ore};}),oreTurno:ore,
-      anticipi:an,sotto:so};
+      anticipi:antc,sotto:so};
     state.storico=state.storico.filter(function(x){return x.date!==en.date;});
     state.storico.push(en);save();b.textContent='Salvato ✓';return;
   }
@@ -545,11 +659,11 @@ document.addEventListener('click',function(e){
   }
   if(a==='pdel'){if(confirm('Eliminare la persona?')){state.persone=state.persone.filter(function(x){return x.id!==id;});delete state.ass[id];save();render();}return;}
   if(a==='sdel'){state.storico=state.storico.filter(function(x){return x.id!==id;});save();render();return;}
-  if(a==='crit'){state.mansioni.forEach(function(m){if(/^(banco|pvc|profilatrice|assemblatrice|imballatrice)/i.test(m.name.trim()))m.peso=3;});save();render();return;}
+  if(a==='crit'){state.mansioni.forEach(function(m){if(/^(banco|pvc)/i.test(m.name.trim()))m.peso=3;});save();render();return;}
   if(a==='exj'){dl('sostituzioni_backup.json',JSON.stringify(state),'application/json');return;}
   if(a==='cpj'){var tx=JSON.stringify(state);if(navigator.clipboard)navigator.clipboard.writeText(tx).then(function(){b.textContent='Copiato ✓';});return;}
   if(a==='exc'){exportCSV();return;}
-  if(a==='reset'){if(confirm('Cancellare tutto?')&&confirm('Sicuro? Non si può annullare.')){state=defState();save();render();}return;}
+  if(a==='reset'){if(confirm('Cancellare tutto?')&&confirm('Sicuro? Non si può annullare.')){state=defState();ensure();render();}return;}
 });
 document.addEventListener('change',function(e){
   var el=e.target,k=el.dataset&&el.dataset.chg;if(!k)return;
@@ -559,8 +673,12 @@ document.addEventListener('change',function(e){
   if(k==='rtarget'){var rr=repOf(id);if(rr){rr.target=Math.max(0,parseInt(el.value,10)||0);save();render();}return;}
   if(k==='rtrack'){if(el.checked){if(!repOf(id))state.reparti.push({mid:id,target:5});}else{state.reparti=state.reparti.filter(function(x){return x.mid!==id;});}save();return;}
   if(k==='mact'){mById(id).active=el.checked;save();return;}
-  if(k==='mturno'){mById(id).turno=el.value;save();return;}
-  if(k==='mpeso'){mById(id).peso=parseInt(el.value,10)||1;save();return;}
+  if(k==='mturno'){mById(id).turno=el.value;save();render();return;}
+  if(k==='mpeso'){var pv=parseInt(el.value,10);mById(id).peso=isNaN(pv)?1:pv;save();return;}
+  if(k==='mgruppo'){mById(id).gruppo=el.value;save();return;}
+  if(k==='mcop'){mById(id).cop=el.value;save();return;}
+  if(k==='gmin'){var gg=state.gruppi.filter(function(x){return x.id===id;})[0];if(gg){var gv=parseInt(el.value,10);gg.min=isNaN(gv)?0:Math.max(0,Math.min(9,gv));save();}return;}
+  if(k==='ori'){if(el.value==='auto')delete state.orario[id];else state.orario[id]=el.value;save();render();return;}
   if(k==='mnome'){mById(id).name=el.value.trim()||mById(id).name;save();return;}
   if(k==='pnome'){var p=pById(id);p.name=el.value.trim()||p.name;save();return;}
   if(k==='phome'){var q=pById(id);q.home=el.value;if(q.cov&&q.home)delete q.cov[q.home];save();render();return;}
